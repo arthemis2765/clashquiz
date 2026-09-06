@@ -1,0 +1,65 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+:root {
+  --bg-deep: #0D1321;
+  --bg-panel: #141B30;
+  --line: rgba(241, 234, 216, 0.10);
+  --line-strong: rgba(241, 234, 216, 0.22);
+  --parchment: #F1EAD8;
+  --parchment-dim: rgba(241, 234, 216, 0.62);
+  --gold: #E8B23B;
+  --teal: #2A9D8F;
+  --coral: #E76F51;
+}
+
+html {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+body {
+  background: var(--bg-deep);
+  color: var(--parchment);
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  overflow-x: hidden;
+  width: 100%;
+}
+
+.font-display {
+  font-family: 'Fraunces', serif;
+}
+
+.font-mono-score {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.35s ease-in-out;
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-card-in {
+  animation: card-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin 0.7s linear infinite;
+}
