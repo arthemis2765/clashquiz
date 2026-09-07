@@ -1,3 +1,4 @@
+import { useState } from "react";
 import BackButton from "../components/BackButton";
 
 const RULES = [
@@ -38,7 +39,32 @@ const RULES = [
   },
 ];
 
+/** Construit la liste des numéros de page à afficher, avec des "..." pour
+ * les pages éloignées de la page courante. Reste lisible même si RULES
+ * s'allonge beaucoup plus tard (pas juste pour les 7 règles actuelles). */
+function getPageNumbers(current, total) {
+  const delta = 1;
+  const range = [];
+  for (let i = 1; i <= total; i++) {
+    if (i === 1 || i === total || (i >= current - delta && i <= current + delta)) {
+      range.push(i);
+    }
+  }
+  const withEllipsis = [];
+  let prev = null;
+  for (const page of range) {
+    if (prev !== null && page - prev > 1) withEllipsis.push("...");
+    withEllipsis.push(page);
+    prev = page;
+  }
+  return withEllipsis;
+}
+
 export default function Rules({ onBack }) {
+  const [page, setPage] = useState(1);
+  const total = RULES.length;
+  const rule = RULES[page - 1];
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md flex flex-col gap-6 animate-card-in">
@@ -48,21 +74,39 @@ export default function Rules({ onBack }) {
           </h2>
         </div>
 
-        <div className="flex flex-col gap-3">
-          {RULES.map((rule) => (
-            <div
-              key={rule.title}
-              className="border rounded-xl px-5 py-4"
-              style={{ borderColor: "var(--line-strong)", background: "var(--bg-panel)" }}
-            >
-              <p className="font-display font-bold text-sm uppercase tracking-widest mb-1.5" style={{ color: "var(--gold)" }}>
-                {rule.emoji} {rule.title}
-              </p>
-              <p className="text-sm leading-relaxed" style={{ color: "var(--parchment-dim)" }}>
-                {rule.text}
-              </p>
-            </div>
-          ))}
+        <div
+          className="border rounded-xl px-5 py-4 min-h-[180px]"
+          style={{ borderColor: "var(--line-strong)", background: "var(--bg-panel)" }}
+        >
+          <p className="font-display font-bold text-sm uppercase tracking-widest mb-1.5" style={{ color: "var(--gold)" }}>
+            {rule.emoji} {rule.title}
+          </p>
+          <p className="text-sm leading-relaxed" style={{ color: "var(--parchment-dim)" }}>
+            {rule.text}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-center gap-1.5">
+          {getPageNumbers(page, total).map((p, i) =>
+            p === "..." ? (
+              <span key={`ellipsis-${i}`} className="text-sm px-1" style={{ color: "var(--parchment-dim)" }}>
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className="w-7 h-7 rounded-lg text-sm font-semibold transition-colors"
+                style={{
+                  border: `1px solid ${p === page ? "var(--gold)" : "var(--line-strong)"}`,
+                  background: p === page ? "rgba(232,178,59,0.15)" : "transparent",
+                  color: p === page ? "var(--gold)" : "var(--parchment-dim)",
+                }}
+              >
+                {p}
+              </button>
+            )
+          )}
         </div>
 
         <BackButton onClick={onBack} />

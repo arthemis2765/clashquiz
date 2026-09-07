@@ -53,3 +53,7 @@ register_limiter = RateLimiter(max_calls=10, period_seconds=3600)
 # 20 tentatives de code de partie privée par minute et par IP : un joueur qui se
 # trompe de code a largement de quoi réessayer, mais ça bloque un bruteforce rapide.
 private_join_limiter = RateLimiter(max_calls=20, period_seconds=60)
+
+# 1 commentaire toutes les 30 secondes par joueur : laisse largement le temps
+# d'écrire un avis, bloque le spam en boucle sur le mur public.
+comment_limiter = RateLimiter(max_calls=1, period_seconds=30)

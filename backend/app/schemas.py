@@ -1,4 +1,6 @@
 import re
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, field_validator, Field
 
@@ -82,3 +84,43 @@ class CategoryOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CommentCreate(BaseModel):
+    player_id: str
+    device_token: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=300)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Le commentaire ne peut pas être vide.")
+        return value
+
+
+class CommentOut(BaseModel):
+    id: str
+    pseudo: str
+    content: str
+    created_at: datetime
+    reactions: dict[str, int] = {}
+    my_reaction: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CommentPage(BaseModel):
+    items: list[CommentOut]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class ReactionToggle(BaseModel):
+    player_id: str
+    device_token: str = Field(min_length=1)
+    emoji: Literal["heart", "pray", "angry", "thumbsup"]

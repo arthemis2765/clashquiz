@@ -106,3 +106,36 @@ export function connectGameSocket({ onEvent }) {
     },
   };
 }
+
+export async function fetchComments(page = 1, pageSize = 20, viewerId = null) {
+  const params = new URLSearchParams({ page, page_size: pageSize });
+  if (viewerId) params.set("player_id", viewerId);
+  const res = await fetch(`${API_URL}/api/comments?${params}`);
+  return res.json();
+}
+
+export async function postComment(playerId, deviceToken, content) {
+  const res = await fetch(`${API_URL}/api/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ player_id: playerId, device_token: deviceToken, content }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "Impossible d'envoyer le commentaire.");
+  }
+  return res.json();
+}
+
+export async function toggleReaction(commentId, playerId, deviceToken, emoji) {
+  const res = await fetch(`${API_URL}/api/comments/${commentId}/reactions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ player_id: playerId, device_token: deviceToken, emoji }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "Impossible d'enregistrer la réaction.");
+  }
+  return res.json();
+}

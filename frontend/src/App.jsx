@@ -7,6 +7,7 @@ import MatchResult from "./pages/MatchResult";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import Rules from "./pages/Rules";
+import Comments from "./pages/Comments";
 import Menu from "./components/Menu";
 import { getStoredPlayer, clearStoredPlayer, updateStoredPlayer } from "./lib/gameSocket";
 
@@ -103,6 +104,10 @@ export default function App() {
 
   if (menuView === "rules") {
     return <Rules onBack={() => setMenuView(null)} />;
+  }
+
+  if (menuView === "comments") {
+    return <Comments player={player} onBack={() => setMenuView(null)} />;
   }
 
   if (menuView === "private") {

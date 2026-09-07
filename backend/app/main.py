@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import players, categories, leaderboard
+from app.routers import players, categories, leaderboard, comments
 from app.websocket.game import router as game_ws_router
 
 load_dotenv()
@@ -31,6 +31,7 @@ app.add_middleware(
 app.include_router(players.router)
 app.include_router(categories.router)
 app.include_router(leaderboard.router)
+app.include_router(comments.router)
 app.include_router(game_ws_router)
 
 

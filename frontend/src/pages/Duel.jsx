@@ -67,7 +67,8 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
   const [secondsLeft, setSecondsLeft] = useState(null);
   const [stuck, setStuck] = useState(false);
   const [waitingCode, setWaitingCode] = useState(null);
-  const [queueInfo, setQueueInfo] = useState(null); // {waiting, min_players} — matchmaking public en cours
+  const [queueInfo, setQueueInfo] = useState(null); // {waiting, minPlayers, maxPlayers, deadline} — matchmaking public en cours
+  const [queueSecondsLeft, setQueueSecondsLeft] = useState(null); // compte à rebours dérivé de queueInfo.deadline
   const [jokerCharges, setJokerCharges] = useState({});
   const [hintText, setHintText] = useState(null);
   const [optedOut, setOptedOut] = useState(false);
@@ -117,8 +118,18 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           // Un joueur vient de rejoindre (ou quitter) la file de matchmaking
           // public : on affiche le compteur pour rassurer le premier arrivé,
           // qui sinon ne sait pas si quelqu'un d'autre est bien en train de
-          // chercher une partie de son côté.
-          setQueueInfo({ waiting: payload.waiting, minPlayers: payload.min_players });
+          // chercher une partie de son côté. `deadline` (timestamp Unix) est
+          // fourni par le serveur quand un timer de lancement auto est en
+          // cours (fenêtre de grâce pour un 4e, ou repli en duel si aucun 3e
+          // ne se présente) : on affiche un compte à rebours basé dessus
+          // plutôt que sur un simple nombre de secondes, pour rester juste
+          // même si ce message met du temps à arriver.
+          setQueueInfo({
+            waiting: payload.waiting,
+            minPlayers: payload.min_players,
+            maxPlayers: payload.max_players,
+            deadline: payload.deadline ?? null,
+          });
         }
         if (event === "match_found") {
           opponentsRef.current = payload.opponents ?? [];
@@ -287,6 +298,24 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
   }, []);
 
   useEffect(() => {
+    // Recalcule le compte à rebours d'attente (fenêtre pour un 4e joueur, ou
+    // repli en duel classique) à partir de la deadline absolue envoyée par le
+    // serveur — recalculé chaque seconde plutôt que décompté localement, pour
+    // rester juste même si l'onglet perd le focus un moment.
+    if (!queueInfo?.deadline) {
+      setQueueSecondsLeft(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil(queueInfo.deadline - Date.now() / 1000));
+      setQueueSecondsLeft(remaining);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [queueInfo?.deadline]);
+
+  useEffect(() => {
     // Filet de sécurité : si plus aucun event n'arrive pendant 45s en pleine
     // partie (bug serveur, coupure réseau...), on propose de sortir plutôt que
     // de laisser l'écran figé indéfiniment.
@@ -392,11 +421,25 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
         </div>
         {mode === "queue" && (
           <p className="text-sm text-center" style={{ color: "var(--gold)" }}>
-            {queueInfo
-              ? queueInfo.waiting > 1
-                ? `${queueInfo.waiting} joueurs connectés — en attente d'encore un peu de monde…`
-                : "Tu es le premier ! On attend d'autres joueurs pour lancer la partie…"
-              : "Connexion en cours…"}
+            {!queueInfo ? (
+              "Connexion en cours…"
+            ) : queueInfo.waiting <= 1 ? (
+              "Tu es le premier ! On attend d'autres joueurs pour lancer la partie…"
+            ) : queueSecondsLeft !== null ? (
+              queueInfo.waiting >= queueInfo.minPlayers ? (
+                <>
+                  {queueInfo.waiting} joueurs connectés — la partie démarre dans{" "}
+                  <b>{queueSecondsLeft}s</b> si personne d'autre ne rejoint…
+                </>
+              ) : (
+                <>
+                  {queueInfo.waiting} joueurs connectés — duel va commence{" "}
+                  <b>{queueSecondsLeft}s</b> si aucun 3ᵉ joueur ne rejoint…
+                </>
+              )
+            ) : (
+              `${queueInfo.waiting} joueurs connectés — en attente d'encore un peu de monde…`
+            )}
           </p>
         )}
         {mode === "queue" && (

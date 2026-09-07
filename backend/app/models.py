@@ -3,7 +3,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Boolean, DateTime, ForeignKey, Enum
+    Column, String, Integer, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -23,6 +23,13 @@ class HintType(str, enum.Enum):
     logo = "logo"
     photo = "photo"
     text = "text"
+
+
+class ReactionEmoji(str, enum.Enum):
+    heart = "heart"
+    pray = "pray"
+    angry = "angry"
+    thumbsup = "thumbsup"
 
 
 class Player(Base):
@@ -104,3 +111,31 @@ class MatchRound(Base):
     winner_id = Column(UUID(as_uuid=True), ForeignKey("players.id"), nullable=True)
     timed_out = Column(Boolean, default=False)
     answered_at = Column(DateTime, nullable=True)
+
+
+class Comment(Base):
+    __tablename__ = "comments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    player_id = Column(UUID(as_uuid=True), ForeignKey("players.id"), nullable=False)
+    content = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    player = relationship("Player")
+
+
+class CommentReaction(Base):
+    """Une réaction par joueur et par commentaire : la contrainte unique force
+    un upsert (changer d'emoji remplace l'ancien plutôt que d'en ajouter un)
+    au lieu de laisser un joueur accumuler plusieurs réactions sur le même
+    commentaire."""
+    __tablename__ = "comment_reactions"
+    __table_args__ = (
+        UniqueConstraint("comment_id", "player_id", name="uq_comment_reaction_player"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    comment_id = Column(UUID(as_uuid=True), ForeignKey("comments.id"), nullable=False)
+    player_id = Column(UUID(as_uuid=True), ForeignKey("players.id"), nullable=False)
+    emoji = Column(Enum(ReactionEmoji), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

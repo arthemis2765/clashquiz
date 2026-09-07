@@ -3,6 +3,7 @@ import random
 import secrets
 import string
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
@@ -104,6 +105,9 @@ class PendingGroup:
     lancement de la partie (démarre à 3, laisse une fenêtre pour un 4e)."""
     players: List[QueuedPlayer]
     timer_task: Optional[asyncio.Task] = None
+    # Instant (time.time()) où la fenêtre de grâce a démarré, pour calculer la
+    # deadline envoyée aux joueurs dans queue_update.
+    grace_started_at: Optional[float] = None
 
 
 class MatchQuestionPool:
@@ -199,6 +203,10 @@ class ConnectionManager:
         self.queues: Dict[str, List[QueuedPlayer]] = {}
         self.pending_groups: Dict[str, PendingGroup] = {}
         self.queue_fallback_timers: Dict[str, asyncio.Task] = {}
+        # Instant (time.time()) où le timer de repli en duel (file bloquée à 2)
+        # a démarré, par catégorie — pour calculer la deadline envoyée aux
+        # joueurs dans queue_update.
+        self.queue_fallback_started_at: Dict[str, float] = {}
         self.matches: Dict[str, MatchState] = {}
         self.player_to_match: Dict[str, str] = {}
         # code partie privée -> (créateur en attente, questions déjà résolues pour sa catégorie)
@@ -231,16 +239,39 @@ class ConnectionManager:
     async def _broadcast_queue_state(self, category_slug: str):
         """Prévient tous les joueurs en attente (file + groupe en formation) du
         nombre actuel de joueurs pour cette catégorie, pour qu'aucun ne se
-        demande s'il attend tout seul dans le vide."""
+        demande s'il attend tout seul dans le vide.
+
+        Inclut aussi la deadline (timestamp Unix, en secondes) du timer de
+        lancement automatique en cours, si un est actif : fenêtre de grâce
+        pour un 4e joueur (groupe déjà à 3), ou repli en duel classique si
+        aucun 3e ne se présente (file à 2). On envoie un timestamp absolu
+        plutôt qu'un nombre de secondes restantes pour que le compte à
+        rebours affiché reste juste côté client même si ce message met du
+        temps à arriver (latence réseau) : `null` si aucun timer n'est actif
+        pour l'instant (ex: file à 1 seul joueur)."""
         queue = self.queues.get(category_slug, [])
         pending = self.pending_groups.get(category_slug)
         waiting_players = list(queue) + (list(pending.players) if pending else [])
         count = len(waiting_players)
+
+        deadline = None
+        if pending and pending.timer_task and pending.grace_started_at:
+            deadline = pending.grace_started_at + MATCHMAKING_GRACE_SECONDS
+        else:
+            fallback_started_at = self.queue_fallback_started_at.get(category_slug)
+            if fallback_started_at:
+                deadline = fallback_started_at + MATCHMAKING_FALLBACK_SECONDS
+
         for p in waiting_players:
             try:
                 await p.websocket.send_json({
                     "event": "queue_update",
-                    "payload": {"waiting": count, "min_players": MATCHMAKING_MIN_PLAYERS},
+                    "payload": {
+                        "waiting": count,
+                        "min_players": MATCHMAKING_MIN_PLAYERS,
+                        "max_players": MATCHMAKING_MAX_PLAYERS,
+                        "deadline": deadline,
+                    },
                 })
             except Exception:
                 # Le socket peut être fermé (déconnexion en cours) : on ignore.
@@ -287,9 +318,10 @@ class ConnectionManager:
                 # On a atteint le seuil normal (3) : un éventuel timer de
                 # repli à 2 joueurs pour cette catégorie devient obsolète.
                 fallback_task = self.queue_fallback_timers.pop(player.category_slug, None)
+                self.queue_fallback_started_at.pop(player.category_slug, None)
                 if fallback_task:
                     fallback_task.cancel()
-                pending = PendingGroup(players=group_players)
+                pending = PendingGroup(players=group_players, grace_started_at=time.time())
                 self.pending_groups[player.category_slug] = pending
                 pending.timer_task = asyncio.create_task(
                     self._finalize_after_grace(player.category_slug, questions_by_difficulty, on_ready)
@@ -300,6 +332,7 @@ class ConnectionManager:
                     # Seulement 2 joueurs en attente pour l'instant : plutôt que
                     # de les faire patienter indéfiniment un 3e qui ne vient
                     # peut-être jamais, on programme un repli en duel classique.
+                    self.queue_fallback_started_at[player.category_slug] = time.time()
                     self.queue_fallback_timers[player.category_slug] = asyncio.create_task(
                         self._finalize_fallback_duel(player.category_slug, questions_by_difficulty, on_ready)
                     )
@@ -336,6 +369,7 @@ class ConnectionManager:
 
         async with self._lock:
             self.queue_fallback_timers.pop(category_slug, None)
+            self.queue_fallback_started_at.pop(category_slug, None)
             queue = self.queues.get(category_slug, [])
             if len(queue) < 2:
                 return  # un des deux a quitté la file entre-temps
@@ -418,6 +452,7 @@ class ConnectionManager:
                 pending.players = [p for p in pending.players if p.player_id != player_id]
             if len(self.queues[category_slug]) < 2:
                 fallback_task = self.queue_fallback_timers.pop(category_slug, None)
+                self.queue_fallback_started_at.pop(category_slug, None)
                 if fallback_task:
                     fallback_task.cancel()
             await self._broadcast_queue_state(category_slug)
