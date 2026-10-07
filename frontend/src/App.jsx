@@ -56,11 +56,23 @@ export default function App() {
     const newElo = payload.elo?.[player.id];
     const eloBefore = player.elo_score;
 
-    if (typeof newElo === "number") {
-      const updated = updateStoredPlayer({
-        elo_score: newElo,
-        games_played: (player.games_played ?? 0) + 1,
-      });
+    // Le serveur compte la partie pour TOUS les participants, mais n'envoie un
+    // nouvel Elo qu'au gagnant et au 2e en groupe (3-4 joueurs). Un classement
+    // non vide prouve que la partie a bien été enregistrée (il contient au moins
+    // les joueurs de ce match) ; s'il est vide, l'écriture en base a échoué et on
+    // ne touche pas aux stats locales pour ne pas les désynchroniser.
+    const leaderboard = payload.leaderboard ?? [];
+    if (leaderboard.length > 0) {
+      const mine = leaderboard.find((entry) => entry.player_id === player.id);
+      const updates = {
+        // Dans le top du classement : valeur faisant foi côté serveur.
+        // Sinon : cette partie vient d'être comptée pour moi aussi.
+        games_played: mine ? mine.games_played : (player.games_played ?? 0) + 1,
+      };
+      if (typeof newElo === "number") updates.elo_score = newElo;
+      else if (mine) updates.elo_score = mine.elo_score;
+
+      const updated = updateStoredPlayer(updates);
       if (updated) setPlayer(updated);
     }
 

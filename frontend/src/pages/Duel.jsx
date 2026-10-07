@@ -80,11 +80,21 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
   // aussi cette valeur dans une ref pour éviter de lire un état figé (stale
   // closure) au moment de l'event match_end.
   const opponentsRef = useRef([]);
+  // Passe à true à la réception de match_end : une fermeture du socket après
+  // la fin de partie est normale et ne doit pas afficher d'erreur de connexion.
+  const finishedRef = useRef(false);
 
   // Tous les joueurs de la partie (moi + adversaires), pour retrouver un
   // pseudo à partir d'un id (scores/lives/eliminated sont keyés par id).
   const allPlayers = [{ id: player.id, pseudo: player.pseudo }, ...opponents.map((o) => ({ id: o.player_id, pseudo: o.pseudo }))];
   const pseudoFor = (id) => allPlayers.find((p) => p.id === id)?.pseudo ?? "Un joueur";
+  // Version pour le handler WebSocket : celui-ci est créé une seule fois au
+  // montage, donc `opponents` (état) y est figé à [] pour toute la partie. La
+  // ref, elle, est toujours à jour.
+  const pseudoFromRef = (id) =>
+    id === player.id
+      ? player.pseudo
+      : opponentsRef.current.find((o) => o.player_id === id)?.pseudo ?? "Un joueur";
   const isYourTurn = status === "playing" && activePlayerId === player.id;
 
   function startCountdown(seconds) {
@@ -197,7 +207,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           if (payload.eliminated?.length) {
             setEliminatedNames((prev) => [
               ...prev,
-              ...payload.eliminated.map((id) => (id === player.id ? "Toi" : pseudoFor(id))),
+              ...payload.eliminated.map((id) => (id === player.id ? "Toi" : pseudoFromRef(id))),
             ]);
           }
         }
@@ -209,7 +219,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           if (payload.eliminated?.length) {
             setEliminatedNames((prev) => [
               ...prev,
-              ...payload.eliminated.map((id) => (id === player.id ? "Toi" : pseudoFor(id))),
+              ...payload.eliminated.map((id) => (id === player.id ? "Toi" : pseudoFromRef(id))),
             ]);
           }
         }
@@ -222,12 +232,13 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           setLastResult(payload);
           if (payload.eliminated?.length) {
             setEliminatedNames(payload.eliminated.map((id) =>
-              id === player.id ? "Toi" : pseudoFor(id)
+              id === player.id ? "Toi" : pseudoFromRef(id)
             ));
           }
           clearInterval(timerRef.current);
         }
         if (event === "match_end") {
+          finishedRef.current = true;
           setStatus("finished");
           clearInterval(timerRef.current);
           onMatchEnd({
@@ -257,6 +268,16 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             setErrorMessage(payload.message);
           }
         }
+      },
+      onClose: () => {
+        // Fermeture volontaire (démontage) ou partie terminée : rien à signaler.
+        if (cancelled || finishedRef.current) return;
+        // Sinon la connexion est tombée (ou n'a jamais pu s'établir) : sans ça
+        // l'écran restait figé. On garde un éventuel message fatal du serveur.
+        clearInterval(timerRef.current);
+        setErrorMessage(
+          (prev) => prev ?? "La connexion au serveur a été interrompue. Retourne à l'accueil pour relancer une partie."
+        );
       },
     });
 
@@ -351,6 +372,14 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
     );
   }
 
+  // Erreur récupérable (ex : « Tu as déjà une partie en cours »). Définie ici
+  // pour être affichée aussi pendant l'attente, pas seulement en pleine partie.
+  const toast = toastError ? (
+    <p className="font-display italic text-center text-sm" style={{ color: "var(--coral)" }}>
+      {toastError}
+    </p>
+  ) : null;
+
   function handleCopyLink() {
     const link = `${window.location.origin}${window.location.pathname}?match=${waitingCode}`;
     navigator.clipboard?.writeText(link).then(() => {
@@ -363,10 +392,18 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
     if (mode === "create_private") {
       if (!waitingCode) {
         return (
-          <div className="min-h-screen flex items-center justify-center">
+          <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
             <p className="font-display italic text-lg" style={{ color: "var(--parchment-dim)" }}>
               Création de la partie…
             </p>
+            {toast}
+            <button
+              onClick={onAbandon}
+              className="text-sm underline"
+              style={{ color: "var(--parchment-dim)" }}
+            >
+              Annuler
+            </button>
           </div>
         );
       }
@@ -394,6 +431,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             <p className="font-display italic text-sm" style={{ color: "var(--parchment-dim)" }}>
               En attente de ton ami…
             </p>
+            {toast}
             <button
               onClick={onAbandon}
               className="text-sm underline"
@@ -442,15 +480,14 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             )}
           </p>
         )}
-        {mode === "queue" && (
-          <button
-            onClick={onAbandon}
-            className="text-sm underline"
-            style={{ color: "var(--parchment-dim)" }}
-          >
-            Changer de catégorie
-          </button>
-        )}
+        {toast}
+        <button
+          onClick={onAbandon}
+          className="text-sm underline"
+          style={{ color: "var(--parchment-dim)" }}
+        >
+          {mode === "queue" ? "Changer de catégorie" : "Annuler"}
+        </button>
       </div>
     );
   }
@@ -573,7 +610,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
 
           {hintText && (
             <p className="text-sm" style={{ color: "var(--gold)" }}>
-              Indice : le pays commence par <b>{hintText}</b>
+              Indice : la réponse commence par <b>{hintText}</b>
             </p>
           )}
 
@@ -595,11 +632,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             </p>
           )}
 
-          {toastError && (
-            <p className="font-display italic text-center text-sm" style={{ color: "var(--coral)" }}>
-              {toastError}
-            </p>
-          )}
+          {toast}
 
           {status === "round_end" && lastResult && (
             <div className="text-center flex flex-col gap-1">

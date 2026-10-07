@@ -6,10 +6,23 @@ export default function PrivateGame({ onCreatePrivate, onJoinPrivate, onBack }) 
   const [categories, setCategories] = useState([]);
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState(null);
+  const [categoriesError, setCategoriesError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    fetchCategories().then(setCategories);
-  }, []);
+    let cancelled = false;
+    setCategoriesError(null);
+    fetchCategories()
+      .then((data) => {
+        if (!cancelled) setCategories(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setCategoriesError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   function handleJoinSubmit(e) {
     e.preventDefault();
@@ -50,10 +63,22 @@ export default function PrivateGame({ onCreatePrivate, onJoinPrivate, onBack }) 
                 <span style={{ color: "var(--gold)" }}>🔗</span>
               </button>
             ))}
-            {categories.length === 0 && (
+            {categories.length === 0 && !categoriesError && (
               <p className="text-sm text-center py-4" style={{ color: "var(--parchment-dim)" }}>
                 Chargement des thèmes…
               </p>
+            )}
+            {categoriesError && (
+              <div className="flex flex-col items-center gap-3 py-4 text-center text-sm" style={{ color: "var(--coral)" }}>
+                <span>{categoriesError}</span>
+                <button
+                  onClick={() => setReloadKey((k) => k + 1)}
+                  className="px-3 py-1 text-xs"
+                  style={{ border: "1px solid var(--line-strong)", color: "var(--parchment-dim)" }}
+                >
+                  Réessayer
+                </button>
+              </div>
             )}
           </div>
         </div>

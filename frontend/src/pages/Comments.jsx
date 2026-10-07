@@ -11,7 +11,7 @@ const REACTIONS = [
   { key: "thumbsup", emoji: "👍🏻" },
 ];
 
-function ReactionButton({ comment, player, onReacted }) {
+function ReactionButton({ comment, player, onReacted, onError }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -25,8 +25,12 @@ function ReactionButton({ comment, player, onReacted }) {
 
   async function handlePick(emojiKey) {
     setOpen(false);
-    const updated = await toggleReaction(comment.id, player.id, player.device_token, emojiKey);
-    onReacted(updated);
+    try {
+      const updated = await toggleReaction(comment.id, player.id, player.device_token, emojiKey);
+      onReacted(updated);
+    } catch (err) {
+      onError?.(err.message);
+    }
   }
 
   const mine = REACTIONS.find((r) => r.key === comment.my_reaction);
@@ -111,23 +115,47 @@ export default function Comments({ player, onBack }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  // Erreur d'affichage de la liste (chargement, « charger plus », réaction),
+  // distincte de `error` qui concerne uniquement le formulaire d'envoi.
+  const [listError, setListError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    fetchComments(1, 20, player.id).then((data) => {
-      setComments(data.items);
-      setTotalPages(data.total_pages);
-      setLoading(false);
-    });
-  }, [player.id]);
+    let cancelled = false;
+    setLoading(true);
+    setListError(null);
+    fetchComments(1, 20, player.id)
+      .then((data) => {
+        if (cancelled) return;
+        setComments(data.items ?? []);
+        setPage(1);
+        setTotalPages(data.total_pages ?? 1);
+      })
+      .catch((err) => {
+        if (!cancelled) setListError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [player.id, reloadKey]);
 
   async function handleLoadMore() {
     setLoadingMore(true);
-    const nextPage = page + 1;
-    const data = await fetchComments(nextPage, 20, player.id);
-    setComments((prev) => [...prev, ...data.items]);
-    setPage(nextPage);
-    setTotalPages(data.total_pages);
-    setLoadingMore(false);
+    setListError(null);
+    try {
+      const nextPage = page + 1;
+      const data = await fetchComments(nextPage, 20, player.id);
+      setComments((prev) => [...prev, ...(data.items ?? [])]);
+      setPage(nextPage);
+      setTotalPages(data.total_pages ?? nextPage);
+    } catch (err) {
+      setListError(err.message);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   async function handleSubmit(e) {
@@ -204,7 +232,22 @@ export default function Comments({ player, onBack }) {
               Chargement…
             </div>
           )}
-          {!loading && comments.length === 0 && (
+          {!loading && listError && comments.length === 0 && (
+            <div
+              className="px-4 py-8 text-center text-sm flex flex-col items-center gap-3"
+              style={{ color: "var(--coral)" }}
+            >
+              <span>{listError}</span>
+              <button
+                onClick={() => setReloadKey((k) => k + 1)}
+                className="px-3 py-1 rounded-lg text-xs"
+                style={{ border: "1px solid var(--line-strong)", color: "var(--parchment-dim)" }}
+              >
+                Réessayer
+              </button>
+            </div>
+          )}
+          {!loading && !listError && comments.length === 0 && (
             <div className="px-4 py-8 text-center text-sm" style={{ color: "var(--parchment-dim)" }}>
               Aucun commentaire pour l'instant. Sois le premier !
             </div>
@@ -222,10 +265,14 @@ export default function Comments({ player, onBack }) {
                 </span>
               </div>
               <p style={{ color: "var(--parchment-dim)" }}>{c.content}</p>
-              <ReactionButton comment={c} player={player} onReacted={handleReacted} />
+              <ReactionButton comment={c} player={player} onReacted={handleReacted} onError={setListError} />
             </div>
           ))}
         </div>
+
+        {listError && comments.length > 0 && (
+          <p className="text-xs text-center" style={{ color: "var(--coral)" }}>{listError}</p>
+        )}
 
         {!loading && page < totalPages && (
           <button

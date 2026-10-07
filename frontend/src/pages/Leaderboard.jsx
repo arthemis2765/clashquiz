@@ -4,10 +4,24 @@ import BackButton from "../components/BackButton";
 
 export default function Leaderboard({ player, onBack }) {
   const [entries, setEntries] = useState(null);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    fetchLeaderboard(20).then(setEntries);
-  }, []);
+    let cancelled = false;
+    setEntries(null);
+    setError(null);
+    fetchLeaderboard(20)
+      .then((data) => {
+        if (!cancelled) setEntries(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
@@ -22,9 +36,24 @@ export default function Leaderboard({ player, onBack }) {
         </div>
 
         <div className="border rounded-xl overflow-hidden" style={{ borderColor: "var(--line-strong)", background: "var(--bg-panel)" }}>
-          {entries === null && (
+          {entries === null && !error && (
             <div className="px-4 py-8 text-center text-sm" style={{ color: "var(--parchment-dim)" }}>
               Chargement…
+            </div>
+          )}
+          {error && (
+            <div
+              className="px-4 py-8 text-center text-sm flex flex-col items-center gap-3"
+              style={{ color: "var(--coral)" }}
+            >
+              <span>{error}</span>
+              <button
+                onClick={() => setReloadKey((k) => k + 1)}
+                className="px-3 py-1 rounded-lg text-xs"
+                style={{ border: "1px solid var(--line-strong)", color: "var(--parchment-dim)" }}
+              >
+                Réessayer
+              </button>
             </div>
           )}
           {entries?.length === 0 && (
