@@ -2,7 +2,8 @@
 Script de seed de la base de données.
 
 Crée les tables si besoin, puis insère les catégories et les questions
-(drapeaux pour Géographie, football pour Sport, mix pour Culture générale)
+(drapeaux pour Géographie, football pour Sport, mix pour Culture générale,
+informatique et IA pour Technologie)
 si elles n'existent pas déjà.
 
 Usage :
@@ -13,18 +14,18 @@ from app import models
 from app.data.countries import COUNTRIES, flag_url
 from app.data.sport_questions import SPORT_QUESTIONS
 from app.data.culture_questions import CULTURE_QUESTIONS
-from app.data.cuisine_questions import CUISINE_QUESTIONS
+from app.data.tech_questions import TECH_QUESTIONS
 
 CATEGORIES = [
     {"name": "Géographie", "slug": "geographie"},
     {"name": "Sport", "slug": "sport"},
     {"name": "Culture générale", "slug": "culture-generale"},
-    {"name": "Cuisine & Gastronomie", "slug": "cuisine-gastronomie"},
+    {"name": "Technologie", "slug": "technologie"},
 ]
 
 # Catégories retirées : on les désactive (active=False) plutôt que de les
 # supprimer, pour ne pas casser l'historique des matchs déjà joués dessus.
-DEPRECATED_CATEGORY_SLUGS = ["mode-beaute"]
+DEPRECATED_CATEGORY_SLUGS = ["mode-beaute", "cuisine-gastronomie"]
 
 
 def get_or_create_category(db, name: str, slug: str) -> models.Category:
@@ -116,13 +117,13 @@ def run():
         created_geo = seed_flag_questions(db, categories["geographie"])
         created_sport = seed_mixed_questions(db, categories["sport"], SPORT_QUESTIONS)
         created_culture = seed_mixed_questions(db, categories["culture-generale"], CULTURE_QUESTIONS)
-        created_cuisine = seed_mixed_questions(db, categories["cuisine-gastronomie"], CUISINE_QUESTIONS)
+        created_tech = seed_mixed_questions(db, categories["technologie"], TECH_QUESTIONS)
         deactivated = deactivate_categories(db, DEPRECATED_CATEGORY_SLUGS)
 
         print(f"Seed terminé. Géographie : {created_geo} nouvelles questions drapeau. "
               f"Sport : {created_sport} nouvelles questions. "
               f"Culture générale : {created_culture} nouvelles questions. "
-              f"Cuisine & Gastronomie : {created_cuisine} nouvelles questions. "
+              f"Technologie : {created_tech} nouvelles questions. "
               f"Catégories désactivées : {deactivated}.")
     finally:
         db.close()

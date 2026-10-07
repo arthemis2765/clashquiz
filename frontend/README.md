@@ -6,7 +6,7 @@ ClashQuiz est un jeu de competition multijoueur de culture générale.joue avec 
 ## Fonctionnalités
 
 - Joueurs connectés en temps réel.
-- Catégories : **Géographie**, **Sport**, **Culture Générale**, **Cuisine**
+- Catégories : **Géographie**, **Sport**, **Culture Générale**, **Technologie**
 - Parties privées avec code.
 - Classement global et historique des parties.
 - Score Elo.

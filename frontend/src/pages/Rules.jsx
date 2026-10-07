@@ -5,12 +5,12 @@ const RULES = [
   {
     emoji: "🎮",
     title: "Le but du jeu",
-    text: "Tu joues contre 1, 2 ou 3 autres joueurs. À chaque question, il faut deviner un pays grâce à son drapeau, ou répondre à une question de sport, de culture ou de cuisine. Celui qui gagne le plus de manches remporte la partie !",
+    text: "Tu joues contre 1, 2 ou 3 autres joueurs. À chaque question, il faut deviner un pays grâce à son drapeau, ou répondre à une question de sport, de culture ou de technologie. Celui qui gagne le plus de manches remporte la partie !",
   },
   {
     emoji: "🗂️",
     title: "4 catégories au choix",
-    text: "Avant de jouer, tu choisis une catégorie : 🌍 Géographie (deviner un pays à partir de son drapeau), ⚽ Sport, 🧠 Culture générale, ou 🍽️ Cuisine & Gastronomie. Tous les joueurs de la partie répondent aux questions de la même catégorie. Plus tu réponds vite juste, plus les prochaines questions deviennent difficiles !",
+    text: "Avant de jouer, tu choisis une catégorie : 🌍 Géographie (deviner un pays à partir de son drapeau), ⚽ Sport, 🧠 Culture générale, ou 💻 Technologie. Tous les joueurs de la partie répondent aux questions de la même catégorie. Plus tu réponds vite juste, plus les prochaines questions deviennent difficiles !",
   },
   {
     emoji: "⏳",
