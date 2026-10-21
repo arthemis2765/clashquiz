@@ -3,7 +3,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint, JSON
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -139,3 +139,25 @@ class CommentReaction(Base):
     player_id = Column(UUID(as_uuid=True), ForeignKey("players.id"), nullable=False)
     emoji = Column(Enum(ReactionEmoji), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SoloRun(Base):
+    """Une partie solo : 3 vies, difficulté croissante, 3 jokers à usage unique.
+    L'état complet (question en cours, échéance, jokers utilisés) vit en base :
+    le serveur reste l'arbitre du temps et des réponses, le client ne reçoit
+    jamais la réponse attendue avant d'avoir répondu."""
+    __tablename__ = "solo_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    player_id = Column(UUID(as_uuid=True), ForeignKey("players.id"), nullable=False, index=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    score = Column(Integer, default=0)
+    lives = Column(Integer, default=3)
+    max_difficulty = Column(Integer, default=1)
+    jokers = Column(JSON, default=dict)  # {"hint": True, ...} : jokers déjà utilisés
+    used_question_ids = Column(JSON, default=list)
+    current_question_id = Column(Integer, nullable=True)
+    question_deadline = Column(Float, nullable=True)  # time.time() de fin de la question en cours
+    finished = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)

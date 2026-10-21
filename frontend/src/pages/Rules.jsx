@@ -15,22 +15,27 @@ const RULES = [
   {
     emoji: "⏳",
     title: "Chacun son tour",
-    text: "Ce n'est pas la course ! Chaque joueur joue l'un après l'autre, et pas en même temps. Quand c'est ton tour, tu as 10 secondes pour répondre — un petit chrono s'affiche pour t'aider à ne pas trop réfléchir. Quand ce n'est pas ton tour, tu regardes et tu attends gentiment.",
+    text: "Ce n'est pas la course ! Chaque joueur joue l'un après l'autre, et pas en même temps. Quand c'est ton tour, tu as 15 secondes pour répondre — un petit chrono s'affiche pour t'aider à ne pas trop réfléchir. Quand ce n'est pas ton tour, tu regardes et tu attends gentiment.",
   },
   {
     emoji: "❤️",
     title: "Tes 3 cœurs de vie",
-    text: "Tu commences avec 3 cœurs. Si tu te trompes sur ton tour, ou si les 10 secondes se terminent sans réponse, tu perds un cœur. Attention : si tu réponds juste, tu ne perds rien du tout ! Quand tu n'as plus de cœur, tu es éliminé. Le dernier joueur avec au moins un cœur gagne la partie.",
+    text: "Tu commences avec 3 cœurs. Si tu te trompes sur ton tour, ou si les 15 secondes se terminent sans réponse, tu perds un cœur. Attention : si tu réponds juste, tu ne perds rien du tout ! Quand tu n'as plus de cœur, tu es éliminé. Le dernier joueur avec au moins un cœur gagne la partie.",
   },
   {
     emoji: "⭐",
     title: "Tes 3 super-pouvoirs (jokers)",
-    text: "Tu as 3 jokers à utiliser quand tu veux, seulement pendant TON tour, et tu peux les mélanger comme tu veux entre les 3 types : 💡 Indice (te montre les 2 premières lettres de la réponse), 🙈 Passer (tu sautes ton tour sans perdre de cœur, mais sans gagner de point non plus), ⏰ +15 secondes (te donne un peu plus de temps pour réfléchir, utilisable une seule fois par manche).",
+    text: "Tu as 3 jokers à utiliser quand tu veux, seulement pendant TON tour, et tu peux les mélanger comme tu veux entre les 3 types : 💡 Indice (te montre les 2 premières lettres de la réponse), 🙈 Passer (tu sautes ton tour sans perdre de cœur, mais sans gagner de point non plus), ⏰ +10 secondes (te donne un peu plus de temps pour réfléchir, utilisable une seule fois par manche).",
   },
   {
     emoji: "👥",
     title: "Jouer entre amis",
     text: "Tu ne veux pas tomber sur des inconnus ? Crée une partie privée : un code à 6 caractères s'affiche, il te suffit de le partager à tes amis pour qu'ils te rejoignent directement. La partie ne démarre que quand tout le monde est là.",
+  },
+  {
+    emoji: "🎯",
+    title: "Le mode solo",
+    text: "Envie de t'entraîner sans adversaire ? Appuie sur le bouton ▶ Solo à côté d'une catégorie. Tu joues seul, avec 3 cœurs et 15 secondes par question. Une mauvaise réponse ou un temps écoulé te fait perdre un cœur, et la partie s'arrête quand tu n'en as plus. La difficulté augmente toutes les 3 bonnes réponses, jusqu'au niveau 5. Tu as aussi 3 jokers, chacun utilisable une seule fois : 💡 Indice, ⏰ +10 secondes et 🙈 Passer (sans perdre de cœur). Ton score est ton nombre de bonnes réponses, et ton record est gardé pour chaque catégorie. Le solo ne change pas ton score du classement général : tes meilleurs scores solo ont leur propre classement, dans l'onglet Solo.",
   },
   {
     emoji: "🏆",
@@ -41,7 +46,7 @@ const RULES = [
 
 /** Construit la liste des numéros de page à afficher, avec des "..." pour
  * les pages éloignées de la page courante. Reste lisible même si RULES
- * s'allonge beaucoup plus tard (pas juste pour les 7 règles actuelles). */
+ * s'allonge beaucoup plus tard (pas juste pour les règles actuelles). */
 function getPageNumbers(current, total) {
   const delta = 1;
   const range = [];

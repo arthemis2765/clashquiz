@@ -3,6 +3,8 @@ import Home from "./pages/Home";
 import CategorySelect from "./pages/CategorySelect";
 import PrivateGame from "./pages/PrivateGame";
 import Duel from "./pages/Duel";
+import Solo from "./pages/Solo";
+import InstallPrompt from "./components/InstallPrompt";
 import MatchResult from "./pages/MatchResult";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
@@ -14,10 +16,11 @@ import { getStoredPlayer, clearStoredPlayer, updateStoredPlayer } from "./lib/ga
 export default function App() {
   const [player, setPlayer] = useState(getStoredPlayer());
   const [category, setCategory] = useState(null);
-  const [mode, setMode] = useState(null); // "queue" | "create_private" | "join_private"
+  const [mode, setMode] = useState(null); // "queue" | "create_private" | "join_private" | "solo"
   const [privateCode, setPrivateCode] = useState(null);
   const [matchResult, setMatchResult] = useState(null);
   const [menuView, setMenuView] = useState(null); // "leaderboard" | "profile" | "rules" | "private"
+  const [leaderboardPreset, setLeaderboardPreset] = useState(null); // { tab, category } : ouverture directe sur le classement solo
 
   // Lien d'invitation reçu d'un ami (?match=CODE) : on le capture une fois au
   // chargement, on nettoie l'URL, puis on rejoint automatiquement la partie
@@ -38,6 +41,7 @@ export default function App() {
     setMode(null);
     setPrivateCode(null);
     setMenuView(null);
+    setLeaderboardPreset(null);
   }
 
   function handleMenuNavigate(key) {
@@ -56,23 +60,11 @@ export default function App() {
     const newElo = payload.elo?.[player.id];
     const eloBefore = player.elo_score;
 
-    // Le serveur compte la partie pour TOUS les participants, mais n'envoie un
-    // nouvel Elo qu'au gagnant et au 2e en groupe (3-4 joueurs). Un classement
-    // non vide prouve que la partie a bien été enregistrée (il contient au moins
-    // les joueurs de ce match) ; s'il est vide, l'écriture en base a échoué et on
-    // ne touche pas aux stats locales pour ne pas les désynchroniser.
-    const leaderboard = payload.leaderboard ?? [];
-    if (leaderboard.length > 0) {
-      const mine = leaderboard.find((entry) => entry.player_id === player.id);
-      const updates = {
-        // Dans le top du classement : valeur faisant foi côté serveur.
-        // Sinon : cette partie vient d'être comptée pour moi aussi.
-        games_played: mine ? mine.games_played : (player.games_played ?? 0) + 1,
-      };
-      if (typeof newElo === "number") updates.elo_score = newElo;
-      else if (mine) updates.elo_score = mine.elo_score;
-
-      const updated = updateStoredPlayer(updates);
+    if (typeof newElo === "number") {
+      const updated = updateStoredPlayer({
+        elo_score: newElo,
+        games_played: (player.games_played ?? 0) + 1,
+      });
       if (updated) setPlayer(updated);
     }
 
@@ -96,7 +88,17 @@ export default function App() {
   }
 
   if (menuView === "leaderboard") {
-    return <Leaderboard player={player} onBack={() => setMenuView(null)} />;
+    return (
+      <Leaderboard
+        player={player}
+        initialTab={leaderboardPreset?.tab ?? "duel"}
+        initialCategory={leaderboardPreset?.category ?? null}
+        onBack={() => {
+          setMenuView(null);
+          setLeaderboardPreset(null);
+        }}
+      />
+    );
   }
 
   if (menuView === "profile") {
@@ -155,6 +157,23 @@ export default function App() {
     );
   }
 
+  if (mode === "solo" && category) {
+    return (
+      <Solo
+        player={player}
+        category={category}
+        onQuit={resetToMenu}
+        onShowLeaderboard={(cat) => {
+          // On repart d'un état propre (sinon « Retour » relancerait une partie solo),
+          // puis on ouvre le classement solo du thème qui vient d'être joué.
+          resetToMenu();
+          setLeaderboardPreset({ tab: "solo", category: cat.slug });
+          setMenuView("leaderboard");
+        }}
+      />
+    );
+  }
+
   if (mode) {
     return (
       <Duel
@@ -171,11 +190,16 @@ export default function App() {
   return (
     <>
       <Menu onNavigate={handleMenuNavigate} />
+      <InstallPrompt />
       <CategorySelect
         player={player}
         onSelect={(cat) => {
           setCategory(cat);
           setMode("queue");
+        }}
+        onSolo={(cat) => {
+          setCategory(cat);
+          setMode("solo");
         }}
         onCreatePrivate={(cat) => {
           setCategory(cat);

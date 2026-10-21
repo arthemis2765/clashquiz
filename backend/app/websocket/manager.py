@@ -12,14 +12,14 @@ from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
 ROUNDS_TOTAL_LIVES = 3
-TURN_DURATION_SECONDS = 10  # temps de réflexion individuel, par joueur, par tour
+TURN_DURATION_SECONDS = 15  # temps de réflexion individuel, par joueur, par tour
 FAST_ANSWER_THRESHOLD_SECONDS = 5  # réponse rapide sur son tour -> difficulté +1
 MIN_DIFFICULTY = 1
 MAX_DIFFICULTY = 5
 START_DIFFICULTY = 2
 
 JOKER_CHARGES_PER_PLAYER = 3  # pool total, mixable librement entre les 3 types
-EXTRA_TIME_BONUS_SECONDS = 15  # s'ajoute au temps restant du tour EN COURS du joueur qui l'utilise
+EXTRA_TIME_BONUS_SECONDS = 10  # s'ajoute au temps restant du tour EN COURS du joueur qui l'utilise
 
 PRIVATE_CODE_ALPHABET = string.ascii_uppercase + string.digits
 PRIVATE_CODE_LENGTH = 6
@@ -255,12 +255,20 @@ class ConnectionManager:
         count = len(waiting_players)
 
         deadline = None
+        seconds_left = None
         if pending and pending.timer_task and pending.grace_started_at:
             deadline = pending.grace_started_at + MATCHMAKING_GRACE_SECONDS
         else:
             fallback_started_at = self.queue_fallback_started_at.get(category_slug)
             if fallback_started_at:
                 deadline = fallback_started_at + MATCHMAKING_FALLBACK_SECONDS
+
+        # Durée restante calculée avec l'horloge du SERVEUR : le client l'utilise
+        # à la place de `deadline`, car l'horloge d'un PC ou d'un téléphone peut
+        # être décalée (fuseau, heure non synchronisée) et afficher un compte à
+        # rebours absurde (ex. « 3737 s »). `deadline` reste envoyé pour compatibilité.
+        if deadline is not None:
+            seconds_left = max(0.0, deadline - time.time())
 
         for p in waiting_players:
             try:
@@ -271,6 +279,7 @@ class ConnectionManager:
                         "min_players": MATCHMAKING_MIN_PLAYERS,
                         "max_players": MATCHMAKING_MAX_PLAYERS,
                         "deadline": deadline,
+                        "seconds_left": seconds_left,
                     },
                 })
             except Exception:

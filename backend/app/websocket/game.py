@@ -2,7 +2,7 @@ import asyncio
 import logging
 import secrets
 import time
-import unicodedata
+import uuid
 from collections import deque
 from typing import Optional
 
@@ -29,18 +29,10 @@ from app.websocket.manager import (
 )
 from app.websocket.persistence import save_match_result
 from app.rate_limit import private_join_limiter, real_client_ip
+from app.text_utils import is_correct_answer, normalize_answer  # noqa: F401  (normalize_answer reste exporté)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def normalize_answer(text: str) -> str:
-    """Tolérance orthographique légère : ignore la casse, les accents
-    et les espaces superflus, pour éviter la frustration sur les fautes mineures."""
-    text = text.strip().lower()
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    return text
 
 
 async def send_json(ws: WebSocket, event: str, payload: dict):
@@ -59,9 +51,15 @@ def _verify_device_token_sync(player_id: str, device_token: str) -> Optional[str
     vient toujours de la base, pour empêcher qu'un joueur authentifié se
     fasse passer pour un autre pseudo pendant le match.
     """
+    try:
+        # Un identifiant mal formé ne doit pas faire planter le handler WebSocket
+        # (PostgreSQL lève une erreur « invalid input syntax for type uuid »).
+        parsed_id = uuid.UUID(str(player_id))
+    except ValueError:
+        return None
     db = SessionLocal()
     try:
-        player = db.query(models.Player).filter_by(id=player_id).first()
+        player = db.query(models.Player).filter_by(id=parsed_id).first()
         if player and device_token and secrets.compare_digest(player.device_token, device_token):
             return player.pseudo
         return None
@@ -362,10 +360,7 @@ async def game_socket(websocket: WebSocket):
                     # chaîne énorme, stockée puis rediffusée à tous les joueurs du match.
                     submitted_raw = str(data.get("answer", ""))[:100]
                     round_state.submissions[player_id] = submitted_raw
-                    answer = normalize_answer(submitted_raw)
-                    correct = normalize_answer(round_state.question["answer"])
-
-                    if answer != correct:
+                    if not is_correct_answer(submitted_raw, round_state.question["answer"]):
                         # Mauvaise réponse : le joueur peut retenter tant que son
                         # tour n'est pas terminé (timeout ou tentatives épuisées).
                         await send_json(websocket, "wrong_answer", {

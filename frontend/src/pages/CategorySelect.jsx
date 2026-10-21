@@ -1,27 +1,14 @@
 import { useEffect, useState } from "react";
 import { fetchCategories } from "../lib/gameSocket";
 
-export default function CategorySelect({ player, onSelect, onCreatePrivate, onJoinPrivate }) {
+export default function CategorySelect({ player, onSelect, onSolo, onCreatePrivate, onJoinPrivate }) {
   const [categories, setCategories] = useState([]);
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState(null);
-  const [categoriesError, setCategoriesError] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-    setCategoriesError(null);
-    fetchCategories()
-      .then((data) => {
-        if (!cancelled) setCategories(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setCategoriesError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey]);
+    fetchCategories().then(setCategories);
+  }, []);
 
   function handleJoinSubmit(e) {
     e.preventDefault();
@@ -47,18 +34,6 @@ export default function CategorySelect({ player, onSelect, onCreatePrivate, onJo
         </div>
 
         <div className="flex flex-col gap-3">
-          {categoriesError && (
-            <div className="flex flex-col items-center gap-3 py-4 text-center text-sm" style={{ color: "var(--coral)" }}>
-              <span>{categoriesError}</span>
-              <button
-                onClick={() => setReloadKey((k) => k + 1)}
-                className="px-3 py-1 text-xs"
-                style={{ border: "1px solid var(--line-strong)", color: "var(--parchment-dim)" }}
-              >
-                Réessayer
-              </button>
-            </div>
-          )}
           {categories.map((cat) => (
             <div
               key={cat.slug}
@@ -74,6 +49,14 @@ export default function CategorySelect({ player, onSelect, onCreatePrivate, onJo
                 {cat.name}
               </button>
               <button
+                onClick={() => onSolo(cat)}
+                title="Jouer seul"
+                className="self-center my-2 px-3 py-1.5 text-sm font-semibold border"
+                style={{ color: "var(--gold)", borderColor: "var(--gold)" }}
+              >
+                ▶ Solo
+              </button>
+              <button
                 onClick={() => onCreatePrivate(cat)}
                 title="Inviter un ami"
                 className="px-4 flex items-center justify-center text-lg"
@@ -84,6 +67,10 @@ export default function CategorySelect({ player, onSelect, onCreatePrivate, onJo
             </div>
           ))}
         </div>
+
+        <p className="text-xs text-center" style={{ color: "var(--parchment-dim)" }}>
+          Toucher le nom lance une partie en ligne.
+        </p>
 
         <div className="flex items-center gap-3">
           <div className="flex-1 h-px" style={{ background: "var(--line)" }} />

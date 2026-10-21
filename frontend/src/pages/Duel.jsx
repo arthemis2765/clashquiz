@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { connectGameSocket } from "../lib/gameSocket";
-
+ // fonction pour afficher les coeurs restants 
 function Hearts({ count, max = 3, color }) {
   return (
     <div className="flex gap-1 justify-center">
@@ -16,11 +16,11 @@ function Hearts({ count, max = 3, color }) {
     </div>
   );
 }
-
+// fonction pour afficher les jokers restants 
 function JokerBar({ charges, optedOut, disabled, onUse }) {
   const jokers = [
     { type: "hint", label: "💡 Indice", disabledExtra: false },
-    { type: "extra_time", label: "⏱️ +15s", disabledExtra: false },
+    { type: "extra_time", label: "⏱️ +10s", disabledExtra: false },
     { type: "skip", label: "⏭️ Passer", disabledExtra: optedOut },
   ];
 
@@ -48,7 +48,7 @@ function JokerBar({ charges, optedOut, disabled, onUse }) {
     </div>
   );
 }
-
+// composant principal de la page duel
 export default function Duel({ player, category, mode = "queue", privateCode, onMatchEnd, onAbandon }) {
   const [status, setStatus] = useState("queue"); // queue | playing | round_end | finished
   const [opponents, setOpponents] = useState([]); // [{player_id, pseudo}, ...] — 1 à 3 adversaires
@@ -97,6 +97,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
       : opponentsRef.current.find((o) => o.player_id === id)?.pseudo ?? "Un joueur";
   const isYourTurn = status === "playing" && activePlayerId === player.id;
 
+  // fonction pour lancer un compte à rebours 
   function startCountdown(seconds) {
     clearInterval(timerRef.current);
     setSecondsLeft(seconds);
@@ -138,7 +139,12 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             waiting: payload.waiting,
             minPlayers: payload.min_players,
             maxPlayers: payload.max_players,
-            deadline: payload.deadline ?? null,
+            // Priorité à la durée restante calculée par le serveur : l'horloge du
+            // joueur peut être décalée et fausser un timestamp absolu.
+            deadline:
+              payload.seconds_left != null
+                ? Date.now() / 1000 + payload.seconds_left
+                : (payload.deadline ?? null),
           });
         }
         if (event === "match_found") {
@@ -471,7 +477,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
                 </>
               ) : (
                 <>
-                  {queueInfo.waiting} joueurs connectés — duel va commence{" "}
+                  {queueInfo.waiting} joueurs connectés — duel dans{" "}
                   <b>{queueSecondsLeft}s</b> si aucun 3ᵉ joueur ne rejoint…
                 </>
               )

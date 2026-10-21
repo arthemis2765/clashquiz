@@ -95,6 +95,23 @@ def seed_mixed_questions(db, category: models.Category, questions: list):
     return created
 
 
+def sync_text_questions(db, category: models.Category, questions: list):
+    """Repasse en question texte celles qui existent déjà avec une image (drapeau) :
+    seed_mixed_questions ignore les questions déjà présentes, donc une correction
+    de type (flag -> text) ne s'appliquerait jamais sans cette étape."""
+    wanted = {q[0] for q in questions if q[2] == "text"}
+    fixed = 0
+    rows = db.query(models.Question).filter_by(category_id=category.id).all()
+    for row in rows:
+        if row.prompt_label in wanted and (row.hint_type != models.HintType.text or row.hint_url):
+            row.hint_type = models.HintType.text
+            row.hint_url = None
+            fixed += 1
+    if fixed:
+        db.commit()
+    return fixed
+
+
 def deactivate_categories(db, slugs: list):
     count = 0
     for slug in slugs:
@@ -118,12 +135,13 @@ def run():
         created_sport = seed_mixed_questions(db, categories["sport"], SPORT_QUESTIONS)
         created_culture = seed_mixed_questions(db, categories["culture-generale"], CULTURE_QUESTIONS)
         created_tech = seed_mixed_questions(db, categories["technologie"], TECH_QUESTIONS)
+        fixed_tech = sync_text_questions(db, categories["technologie"], TECH_QUESTIONS)
         deactivated = deactivate_categories(db, DEPRECATED_CATEGORY_SLUGS)
 
         print(f"Seed terminé. Géographie : {created_geo} nouvelles questions drapeau. "
               f"Sport : {created_sport} nouvelles questions. "
               f"Culture générale : {created_culture} nouvelles questions. "
-              f"Technologie : {created_tech} nouvelles questions. "
+              f"Technologie : {created_tech} nouvelles questions ({fixed_tech} corrigées). "
               f"Catégories désactivées : {deactivated}.")
     finally:
         db.close()

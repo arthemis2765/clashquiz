@@ -30,13 +30,30 @@ def real_client_ip(headers, fallback: str) -> str:
 
 
 class RateLimiter:
+    # Toutes les N vérifications, on purge les clés dont plus aucun appel n'est
+    # récent : sans ça, une clé (IP, joueur) créée une fois restait en mémoire
+    # indéfiniment.
+    _GC_EVERY = 500
+
     def __init__(self, max_calls: int, period_seconds: float):
         self.max_calls = max_calls
         self.period_seconds = period_seconds
         self._hits: Dict[str, Deque[float]] = defaultdict(deque)
+        self._calls_since_gc = 0
+
+    def _gc(self, now: float) -> None:
+        for key in [
+            k for k, hits in self._hits.items()
+            if not hits or now - hits[-1] > self.period_seconds
+        ]:
+            del self._hits[key]
 
     def allow(self, key: str) -> bool:
         now = time.time()
+        self._calls_since_gc += 1
+        if self._calls_since_gc >= self._GC_EVERY:
+            self._calls_since_gc = 0
+            self._gc(now)
         hits = self._hits[key]
         while hits and now - hits[0] > self.period_seconds:
             hits.popleft()
@@ -57,3 +74,8 @@ private_join_limiter = RateLimiter(max_calls=20, period_seconds=60)
 # 1 commentaire toutes les 30 secondes par joueur : laisse largement le temps
 # d'écrire un avis, bloque le spam en boucle sur le mur public.
 comment_limiter = RateLimiter(max_calls=1, period_seconds=30)
+
+# 30 nouvelles parties solo toutes les 10 minutes par joueur : largement assez
+# pour enchaîner les « Rejouer », mais bloque un script qui remplirait la table
+# solo_runs de lignes vides.
+solo_start_limiter = RateLimiter(max_calls=30, period_seconds=600)

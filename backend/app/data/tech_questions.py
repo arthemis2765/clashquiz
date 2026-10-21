@@ -37,7 +37,7 @@ TECH_QUESTIONS = [
     ("Quelle unité de stockage suit le mégaoctet, avant le téraoctet ?", "Gigaoctet", "text", None, 2),
     ("Comment s'appelle le moteur de recherche de Microsoft ?", "Bing", "text", None, 2),
     ("Quelle entreprise vend les smartphones de la gamme Galaxy ?", "Samsung", "text", None, 2),
-    ("Dans quel pays est née la marque de téléphones Nokia ?", "Finlande", "flag", "fi", 2),
+    ("Dans quel pays est née la marque de téléphones Nokia ?", "Finlande", "text", None, 2),
     ("Quelle application de vidéos courtes, lancée par ByteDance, est célèbre pour ses danses et ses défis ?", "TikTok", "text", None, 2),
 
     ("Quelle entreprise a créé ChatGPT ?", "OpenAI", "text", None, 2),
@@ -50,12 +50,12 @@ TECH_QUESTIONS = [
     ("Quel langage de programmation, créé par Guido van Rossum, doit son nom à une troupe d'humoristes britanniques ?", "Python", "text", None, 3),
     ("En quelle année le premier iPhone est-il sorti ?", "2007", "text", None, 3),
     ("Comment s'appelle la société mère de Google depuis 2015 ?", "Alphabet", "text", None, 3),
-    ("Dans quel pays se trouve le siège de Samsung ?", "Corée du Sud", "flag", "kr", 3),
+    ("Dans quel pays se trouve le siège de Samsung ?", "Corée du Sud", "text", None, 3),
     ("Quel protocole sécurisé, avec un cadenas dans le navigateur, remplace le simple HTTP ?", "HTTPS", "text", None, 3),
     ("Quel langage sert à mettre en forme les pages web (couleurs, polices, mise en page) ?", "CSS", "text", None, 3),
     ("Quelle monnaie numérique a été créée en 2009 par le mystérieux Satoshi Nakamoto ?", "Bitcoin", "text", None, 3),
     ("Comment s'appelle le robot conversationnel d'OpenAI lancé en novembre 2022 ?", "ChatGPT", "text", None, 3),
-    ("Dans quel pays sont nées les entreprises Sony et Nintendo ?", "Japon", "flag", "jp", 3),
+    ("Dans quel pays sont nées les entreprises Sony et Nintendo ?", "Japon", "text", None, 3),
     ("Quelle plateforme d'hébergement de code, rachetée par Microsoft en 2018, est très utilisée par les développeurs ?", "GitHub", "text", None, 3),
     ("Combien d'octets compte un kilooctet dans la convention binaire historique ?", "1024", "text", None, 3),
 
@@ -75,7 +75,7 @@ TECH_QUESTIONS = [
     ("Quel langage est utilisé pour interroger les bases de données relationnelles ?", "SQL", "text", None, 4),
     ("En quelle année Google a-t-il été fondé ?", "1998", "text", None, 4),
     ("Quel terme anglais désigne une fausse communication qui cherche à voler vos identifiants en se faisant passer pour un organisme de confiance ?", "Phishing", "text", None, 4),
-    ("Dans quel pays a été conçue l'architecture de processeurs ARM, présente dans la plupart des smartphones ?", "Royaume-Uni", "flag", "gb", 4),
+    ("Dans quel pays a été conçue l'architecture de processeurs ARM, présente dans la plupart des smartphones ?", "Royaume-Uni", "text", None, 4),
     ("Quelle cryptomonnaie, proposée par Vitalik Buterin, est la plus connue après le Bitcoin ?", "Ethereum", "text", None, 4),
 
     ("Comment s'appelle l'IA de DeepMind qui a battu le champion de go Lee Sedol en 2016 ?", "AlphaGo", "text", None, 4),

@@ -1,12 +1,23 @@
+import logging
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import players, categories, leaderboard, comments
+from app.routers import players, categories, leaderboard, comments, solo
 from app.websocket.game import router as game_ws_router
 
 load_dotenv()
+
+# Crée au démarrage les tables manquantes (ex. solo_runs) sans toucher aux existantes :
+# évite d'oublier un seed après l'ajout d'une nouvelle table.
+try:
+    from app import models  # noqa: F401  (enregistre les tables sur Base)
+    from app.database import Base, engine
+
+    Base.metadata.create_all(bind=engine)
+except Exception:  # la base peut être momentanément injoignable : l'API démarre quand même
+    logging.getLogger(__name__).exception("Création des tables impossible au démarrage")
 
 app = FastAPI(title="ClashQuiz API")
 
@@ -32,6 +43,7 @@ app.include_router(players.router)
 app.include_router(categories.router)
 app.include_router(leaderboard.router)
 app.include_router(comments.router)
+app.include_router(solo.router)
 app.include_router(game_ws_router)
 
 
