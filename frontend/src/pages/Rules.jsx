@@ -46,28 +46,28 @@ const RULES = [
 export default function Rules({ onBack }) {
   return (
     <div className="min-h-screen flex justify-center px-4 py-10">
-      <div className="w-full max-w-3xl flex flex-col gap-6">
+      <div className="w-full max-w-6xl flex flex-col gap-8">
         <div className="text-center animate-card-in">
           <h2 className="font-display text-3xl font-black">
             Règles du <span style={{ color: "var(--gold)" }}>jeu</span>
           </h2>
         </div>
 
-        {/* Toutes les règles d'un coup, sous forme de cartes : une colonne sur mobile, deux sur grand écran. */}
-        <div className="md:columns-2 md:gap-4">
+        {/* 8 cartes verticales : 4 en haut et 4 en bas sur grand écran, 2 par ligne sur tablette, 1 sur téléphone. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {RULES.map((rule, i) => (
             <article
               key={rule.title}
-              className="break-inside-avoid mb-4 border rounded-xl px-5 py-4 animate-card-in"
+              className="flex flex-col gap-3 border rounded-xl px-5 py-5 animate-card-in"
               style={{
                 borderColor: "var(--line-strong)",
                 background: "var(--bg-panel)",
                 animationDelay: `${Math.min(i, 8) * 60}ms`,
               }}
             >
-              <header className="flex items-center gap-3 mb-2">
+              <header className="flex flex-col items-start gap-3">
                 <span
-                  className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-lg"
+                  className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center text-2xl"
                   style={{ background: "rgba(232,178,59,0.12)", border: "1px solid var(--line)" }}
                   aria-hidden="true"
                 >
