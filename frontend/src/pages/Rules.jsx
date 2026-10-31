@@ -1,11 +1,10 @@
-import { useState } from "react";
 import BackButton from "../components/BackButton";
 
 const RULES = [
   {
     emoji: "🎮",
     title: "Le but du jeu",
-    text: "Tu joues contre 1, 2 ou 3 autres joueurs. À chaque question, il faut deviner un pays grâce à son drapeau, ou répondre à une question de sport, de culture ou de technologie. Celui qui gagne le plus de manches remporte la partie !",
+    text: "Tu joues contre 1, 2 ou 3 autres joueurs. À chaque question, il faut deviner un pays grâce à son drapeau, ou répondre à une question de sport, de culture ou de technologie. Le dernier joueur encore en vie remporte la partie !",
   },
   {
     emoji: "🗂️",
@@ -25,7 +24,7 @@ const RULES = [
   {
     emoji: "⭐",
     title: "Tes 3 super-pouvoirs (jokers)",
-    text: "Tu as 3 jokers à utiliser quand tu veux, seulement pendant TON tour, et tu peux les mélanger comme tu veux entre les 3 types : 💡 Indice (te montre les 2 premières lettres de la réponse), 🙈 Passer (tu sautes ton tour sans perdre de cœur, mais sans gagner de point non plus), ⏰ +10 secondes (te donne un peu plus de temps pour réfléchir, utilisable une seule fois par manche).",
+    text: "Tu as 3 jokers à utiliser quand tu veux, seulement pendant TON tour, et tu peux les mélanger comme tu veux entre les 3 types : 💡 Indice (te montre les 2 premières lettres de la réponse), ⏭️ Passer (tu sautes ton tour sans perdre de cœur, mais sans gagner de point non plus), ⏱️ +10 secondes (te donne un peu plus de temps pour réfléchir, utilisable une seule fois par manche).",
   },
   {
     emoji: "👥",
@@ -35,7 +34,7 @@ const RULES = [
   {
     emoji: "🎯",
     title: "Le mode solo",
-    text: "Envie de t'entraîner sans adversaire ? Appuie sur le bouton ▶ Solo à côté d'une catégorie. Tu joues seul, avec 3 cœurs et 15 secondes par question. Une mauvaise réponse ou un temps écoulé te fait perdre un cœur, et la partie s'arrête quand tu n'en as plus. La difficulté augmente toutes les 3 bonnes réponses, jusqu'au niveau 5. Tu as aussi 3 jokers, chacun utilisable une seule fois : 💡 Indice, ⏰ +10 secondes et 🙈 Passer (sans perdre de cœur). Ton score est ton nombre de bonnes réponses, et ton record est gardé pour chaque catégorie. Le solo ne change pas ton score du classement général : tes meilleurs scores solo ont leur propre classement, dans l'onglet Solo.",
+    text: "Envie de t'entraîner sans adversaire ? Appuie sur le bouton ▶ Solo à côté d'une catégorie. Tu joues seul, avec 3 cœurs et 15 secondes par question. Une mauvaise réponse ou un temps écoulé te fait perdre un cœur, et la partie s'arrête quand tu n'en as plus. La difficulté augmente toutes les 3 bonnes réponses, jusqu'au niveau 5. Tu as aussi 3 jokers, chacun utilisable une seule fois : 💡 Indice, ⏱️ +10 secondes et ⏭️ Passer (sans perdre de cœur). Ton score est ton nombre de bonnes réponses, et ton record est gardé pour chaque catégorie. Le solo ne change pas ton score du classement général : tes meilleurs scores solo ont leur propre classement, dans l'onglet Solo.",
   },
   {
     emoji: "🏆",
@@ -44,77 +43,50 @@ const RULES = [
   },
 ];
 
-/** Construit la liste des numéros de page à afficher, avec des "..." pour
- * les pages éloignées de la page courante. Reste lisible même si RULES
- * s'allonge beaucoup plus tard (pas juste pour les règles actuelles). */
-function getPageNumbers(current, total) {
-  const delta = 1;
-  const range = [];
-  for (let i = 1; i <= total; i++) {
-    if (i === 1 || i === total || (i >= current - delta && i <= current + delta)) {
-      range.push(i);
-    }
-  }
-  const withEllipsis = [];
-  let prev = null;
-  for (const page of range) {
-    if (prev !== null && page - prev > 1) withEllipsis.push("...");
-    withEllipsis.push(page);
-    prev = page;
-  }
-  return withEllipsis;
-}
-
 export default function Rules({ onBack }) {
-  const [page, setPage] = useState(1);
-  const total = RULES.length;
-  const rule = RULES[page - 1];
-
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md flex flex-col gap-6 animate-card-in">
-        <div className="text-center">
+    <div className="min-h-screen flex justify-center px-4 py-10">
+      <div className="w-full max-w-3xl flex flex-col gap-6">
+        <div className="text-center animate-card-in">
           <h2 className="font-display text-3xl font-black">
             Règles du <span style={{ color: "var(--gold)" }}>jeu</span>
           </h2>
         </div>
 
-        <div
-          className="border rounded-xl px-5 py-4 min-h-[180px]"
-          style={{ borderColor: "var(--line-strong)", background: "var(--bg-panel)" }}
-        >
-          <p className="font-display font-bold text-sm uppercase tracking-widest mb-1.5" style={{ color: "var(--gold)" }}>
-            {rule.emoji} {rule.title}
-          </p>
-          <p className="text-sm leading-relaxed" style={{ color: "var(--parchment-dim)" }}>
-            {rule.text}
-          </p>
+        {/* Toutes les règles d'un coup, sous forme de cartes : une colonne sur mobile, deux sur grand écran. */}
+        <div className="md:columns-2 md:gap-4">
+          {RULES.map((rule, i) => (
+            <article
+              key={rule.title}
+              className="break-inside-avoid mb-4 border rounded-xl px-5 py-4 animate-card-in"
+              style={{
+                borderColor: "var(--line-strong)",
+                background: "var(--bg-panel)",
+                animationDelay: `${Math.min(i, 8) * 60}ms`,
+              }}
+            >
+              <header className="flex items-center gap-3 mb-2">
+                <span
+                  className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-lg"
+                  style={{ background: "rgba(232,178,59,0.12)", border: "1px solid var(--line)" }}
+                  aria-hidden="true"
+                >
+                  {rule.emoji}
+                </span>
+                <h3 className="font-display font-bold text-sm uppercase tracking-widest" style={{ color: "var(--gold)" }}>
+                  {rule.title}
+                </h3>
+              </header>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--parchment-dim)" }}>
+                {rule.text}
+              </p>
+            </article>
+          ))}
         </div>
 
-        <div className="flex items-center justify-center gap-1.5">
-          {getPageNumbers(page, total).map((p, i) =>
-            p === "..." ? (
-              <span key={`ellipsis-${i}`} className="text-sm px-1" style={{ color: "var(--parchment-dim)" }}>
-                …
-              </span>
-            ) : (
-              <button
-                key={p}
-                onClick={() => setPage(p)}
-                className="w-7 h-7 rounded-lg text-sm font-semibold transition-colors"
-                style={{
-                  border: `1px solid ${p === page ? "var(--gold)" : "var(--line-strong)"}`,
-                  background: p === page ? "rgba(232,178,59,0.15)" : "transparent",
-                  color: p === page ? "var(--gold)" : "var(--parchment-dim)",
-                }}
-              >
-                {p}
-              </button>
-            )
-          )}
+        <div className="w-full max-w-md mx-auto">
+          <BackButton onClick={onBack} />
         </div>
-
-        <BackButton onClick={onBack} />
       </div>
     </div>
   );
