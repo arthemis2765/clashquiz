@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { connectGameSocket } from "../lib/gameSocket";
+import AnswerInput from "../components/AnswerInput";
  // fonction pour afficher les coeurs restants 
 function Hearts({ count, max = 3, color }) {
   return (
@@ -687,17 +688,13 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           />
 
           <form onSubmit={handleSubmit} className="flex gap-2 w-full max-w-sm">
-            <input
+            <AnswerInput
               value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
+              onChange={setAnswer}
               placeholder={isYourTurn ? "Ta réponse…" : "Ce n'est pas ton tour…"}
               disabled={!isYourTurn || optedOut}
-              className={`min-w-0 flex-1 px-3 sm:px-4 py-3 outline-none transition-transform ${shake ? "animate-shake" : ""}`}
-              style={{
-                background: "rgba(241,234,216,0.04)",
-                border: shake ? "1px solid var(--coral)" : "1px solid var(--line-strong)",
-                color: "var(--parchment)",
-              }}
+              shake={shake}
+              focusKey={`${round?.round_number ?? ""}-${activePlayerId}`}
             />
             <button
               type="submit"

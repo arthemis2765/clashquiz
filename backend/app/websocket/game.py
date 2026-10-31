@@ -29,7 +29,7 @@ from app.websocket.manager import (
 )
 from app.websocket.persistence import save_match_result
 from app.rate_limit import private_join_limiter, real_client_ip
-from app.text_utils import is_correct_answer, normalize_answer  # noqa: F401  (normalize_answer reste exporté)
+from app.text_utils import hint_letters, is_correct_answer, normalize_answer  # noqa: F401  (normalize_answer reste exporté)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -664,8 +664,7 @@ async def handle_use_joker(websocket: WebSocket, player_id: Optional[str], joker
 
     if joker_type == "hint":
         match.joker_charges[player_id] -= 1
-        cleaned_answer = round_state.question["answer"].strip()
-        first_letters = cleaned_answer[:2].upper()
+        first_letters = hint_letters(round_state.question["answer"])
         await send_json(websocket, "joker_hint", {
             "round_number": round_state.round_number,
             "hint": first_letters,

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db
 from app.rate_limit import solo_start_limiter
-from app.text_utils import is_correct_answer
+from app.text_utils import hint_letters, is_correct_answer
 from app.websocket.manager import (
     EXTRA_TIME_BONUS_SECONDS,
     MAX_DIFFICULTY,
@@ -343,7 +343,7 @@ def use_joker(payload: SoloJoker, db: Session = Depends(get_db)):
 
     if payload.joker_type == "hint":
         db.commit()
-        return {"hint": question["answer"].strip()[:2].upper(), "state": _state(run)}
+        return {"hint": hint_letters(question["answer"]), "state": _state(run)}
 
     if payload.joker_type == "extra_time":
         run.question_deadline = (run.question_deadline or time.time()) + EXTRA_TIME_BONUS_SECONDS

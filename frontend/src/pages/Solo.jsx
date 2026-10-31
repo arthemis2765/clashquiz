@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import AnswerInput from "../components/AnswerInput";
 import { startSolo, answerSolo, jokerSolo, currentSolo, abandonSolo } from "../lib/soloApi";
 // constantes pour la partie solo 
 const MAX_LIVES = 3;
@@ -417,19 +418,13 @@ export default function Solo({ player, category, onQuit, onShowLeaderboard }) {
         </div>
 
         <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
+          <AnswerInput
             value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
+            onChange={setAnswer}
             placeholder="Ta réponse…"
-            disabled={inFeedback}
-            autoFocus
-            maxLength={200}
-            className={`min-w-0 flex-1 px-4 py-3 outline-none transition-transform ${shake ? "animate-shake" : ""}`}
-            style={{
-              background: "rgba(241,234,216,0.04)",
-              border: shake ? "1px solid var(--coral)" : "1px solid var(--line-strong)",
-              color: "var(--parchment)",
-            }}
+            readOnly={inFeedback}
+            shake={shake}
+            focusKey={question?.number}
           />
           <button
             type="submit"
