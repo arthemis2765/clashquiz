@@ -74,6 +74,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
   const [hintText, setHintText] = useState(null);
   const [optedOut, setOptedOut] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const socketRef = useRef(null);
   const timerRef = useRef(null);
   const lastActivityRef = useRef(Date.now());
@@ -84,6 +85,11 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
   // Passe à true à la réception de match_end : une fermeture du socket après
   // la fin de partie est normale et ne doit pas afficher d'erreur de connexion.
   const finishedRef = useRef(false);
+  // Code de la partie privée créée par ce joueur, tant que personne n'a rejoint :
+  // permet de la reprendre si la connexion tombe (appli passée en arrière-plan
+  // pour partager le lien). Plus de reprise possible une fois le match trouvé.
+  const hostCodeRef = useRef(null);
+  const matchStartedRef = useRef(false);
 
   // Tous les joueurs de la partie (moi + adversaires), pour retrouver un
   // pseudo à partir d'un id (scores/lives/eliminated sont keyés par id).
@@ -120,11 +126,22 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
     // ne prenne effet, ce qui inscrit le même joueur deux fois côté serveur
     // et peut le faire atterrir dans deux matchs différents.
     let cancelled = false;
-    const socket = connectGameSocket({
-      onEvent: (event, payload) => {
+    let socket = null;
+    let retryTimer = null; // reconnexion du créateur
+    let retries = 0;
+    let joinRetryTimer = null; // nouvel essai de l'ami si le créateur est absent
+    let joinRetries = 0;
+    let pongTimer = null; // attend la réponse au test de vie après un retour dans l'appli
+    let fatal = false; // erreur définitive reçue du serveur : inutile de se reconnecter
+    let everJoined = false; // la 1re connexion a déjà envoyé sa demande (rejoindre/créer)
+    const handleEvent = (event, payload) => {
         if (cancelled) return;
         lastActivityRef.current = Date.now();
         setStuck(false);
+        // Le serveur répond : la connexion est vivante.
+        retries = 0;
+        clearTimeout(pongTimer);
+        setReconnecting(false);
 
         if (event === "queue_update") {
           // Un joueur vient de rejoindre (ou quitter) la file de matchmaking
@@ -149,13 +166,33 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
           });
         }
         if (event === "match_found") {
+          matchStartedRef.current = true;
+          hostCodeRef.current = null; // la partie privée est consommée : plus de code à reprendre
           opponentsRef.current = payload.opponents ?? [];
           setOpponents(payload.opponents ?? []);
           setWaitingCode(null);
           setQueueInfo(null);
         }
         if (event === "private_match_created") {
+          // Reçu à la création, et de nouveau après une reprise réussie.
+          hostCodeRef.current = payload.code;
+          retries = 0;
+          setReconnecting(false);
           setWaitingCode(payload.code);
+        }
+        if (event === "resume_none") {
+          // Le serveur n'a rien à nous rendre. Selon ce qu'on faisait :
+          if (hostCodeRef.current) {
+            fatal = true;
+            hostCodeRef.current = null;
+            setErrorMessage("Ta partie privée n'existe plus. Crées-en une nouvelle.");
+          } else if (matchStartedRef.current) {
+            fatal = true;
+            setErrorMessage("Cette partie est terminée ou introuvable. Retourne à l'accueil pour en relancer une.");
+          } else {
+            // File d'attente (ou rejoindre/créer qui n'avait pas abouti) : on refait la demande.
+            sendInitialAction(socket);
+          }
         }
         if (event === "joker_hint") {
           setHintText(payload.hint);
@@ -258,8 +295,17 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
         }
         if (event === "player_disconnected") {
           const name = opponentsRef.current.find((o) => o.player_id === payload.player_id)?.pseudo ?? "Un joueur";
-          setDisconnectNotice(`${name} s'est déconnecté(e).`);
+          setDisconnectNotice(
+            payload.temporary
+              ? `${name} a perdu la connexion — il peut revenir.`
+              : `${name} a quitté la partie.`
+          );
           setTimeout(() => setDisconnectNotice(null), 4000);
+        }
+        if (event === "player_reconnected") {
+          const name = opponentsRef.current.find((o) => o.player_id === payload.player_id)?.pseudo ?? "Un joueur";
+          setDisconnectNotice(`${name} est de retour.`);
+          setTimeout(() => setDisconnectNotice(null), 3000);
         }
         if (event === "wrong_answer") {
           setShake(true);
@@ -271,57 +317,171 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             // temporaire, la partie continue normalement pour tout le monde.
             setToastError(payload.message);
             setTimeout(() => setToastError(null), 3500);
+            // L'ami arrive pendant que le créateur est parti partager le code :
+            // le code reste valable, on réessaie automatiquement (toutes les 5 s,
+            // pendant 3 minutes au plus, sous la limite de tentatives du serveur).
+            if (mode === "join_private" && !matchStartedRef.current && joinRetries < 36) {
+              joinRetries += 1;
+              clearTimeout(joinRetryTimer);
+              joinRetryTimer = setTimeout(() => {
+                if (cancelled || matchStartedRef.current) return;
+                socket?.joinPrivateMatch({
+                  playerId: player.id,
+                  pseudo: player.pseudo,
+                  code: privateCode,
+                  deviceToken: player.device_token,
+                });
+              }, 5000);
+            }
           } else {
+            fatal = true; // erreur définitive : on arrête de tenter une reprise
+            hostCodeRef.current = null;
+            setReconnecting(false);
             setErrorMessage(payload.message);
           }
         }
-      },
-      onClose: () => {
-        // Fermeture volontaire (démontage) ou partie terminée : rien à signaler.
-        if (cancelled || finishedRef.current) return;
-        // Sinon la connexion est tombée (ou n'a jamais pu s'établir) : sans ça
-        // l'écran restait figé. On garde un éventuel message fatal du serveur.
-        clearInterval(timerRef.current);
-        setErrorMessage(
-          (prev) => prev ?? "La connexion au serveur a été interrompue. Retourne à l'accueil pour relancer une partie."
-        );
-      },
-    });
+    };
 
-    socket.raw.onopen = () => {
-      if (cancelled) {
-        socket.close();
+    const handleClose = () => {
+      // Fermeture volontaire (démontage) ou partie terminée : rien à signaler.
+      if (cancelled || finishedRef.current) return;
+      // La connexion est tombée (réseau coupé, appli passée en arrière-plan,
+      // téléphone verrouillé...). Le serveur ne retire PAS le joueur de sa partie
+      // pour autant : on se reconnecte et il reprend où il en était.
+      if (!fatal && retries < 40) {
+        setReconnecting(true);
+        retries += 1;
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(connect, 1500);
         return;
       }
+      // Trop d'échecs de suite (serveur injoignable) ou erreur définitive : sans ça
+      // l'écran restait figé. On garde un éventuel message fatal du serveur.
+      clearInterval(timerRef.current);
+      setReconnecting(false);
+      setErrorMessage(
+        (prev) => prev ?? "La connexion au serveur a été interrompue. Retourne à l'accueil pour relancer une partie."
+      );
+    };
+
+    // La demande de départ de ce mode de jeu (rejoindre la file, créer ou rejoindre
+    // une partie privée). Envoyée à la 1re connexion, et de nouveau si, après une
+    // reconnexion, le serveur n'avait rien à reprendre.
+    function sendInitialAction(s) {
+      if (!s) return;
       if (mode === "join_private") {
-        socket.joinPrivateMatch({
+        s.joinPrivateMatch({
           playerId: player.id,
           pseudo: player.pseudo,
           code: privateCode,
           deviceToken: player.device_token,
         });
       } else if (mode === "create_private") {
-        socket.createPrivateMatch({
+        s.createPrivateMatch({
           playerId: player.id,
           pseudo: player.pseudo,
           categorySlug: category.slug,
           deviceToken: player.device_token,
         });
       } else {
-        socket.joinQueue({
+        s.joinQueue({
           playerId: player.id,
           pseudo: player.pseudo,
           categorySlug: category.slug,
           deviceToken: player.device_token,
         });
       }
-    };
+    }
 
-    socketRef.current = socket;
+    function connect() {
+      clearTimeout(retryTimer);
+      clearTimeout(pongTimer);
+      const previous = socket;
+      // Les callbacks d'un ancien socket sont ignorés dès qu'un nouveau le remplace
+      // (sinon sa fermeture tardive relancerait une reconnexion ou une erreur).
+      const s = connectGameSocket({
+        onEvent: (event, payload) => {
+          if (s === socket) handleEvent(event, payload);
+        },
+        onClose: () => {
+          if (s === socket) handleClose();
+        },
+      });
+      socket = s;
+      socketRef.current = s;
+      if (previous) {
+        try {
+          previous.close();
+        } catch {
+          // déjà fermé
+        }
+      }
+
+      s.raw.onopen = () => {
+        if (cancelled) {
+          s.close();
+          return;
+        }
+        if (!everJoined) {
+          everJoined = true;
+          sendInitialAction(s);
+        } else {
+          // Reconnexion : on demande d'abord au serveur de nous rattacher à ce que
+          // l'on avait en cours (partie, résultat manqué, code privé, file).
+          s.resumeSession({
+            playerId: player.id,
+            deviceToken: player.device_token,
+            code: hostCodeRef.current,
+          });
+        }
+      };
+    }
+
+    // Retour dans l'appli, ou retour du réseau : après un passage en arrière-plan le
+    // socket peut sembler ouvert alors qu'il est mort. On le teste (ping/pong) et on
+    // se reconnecte s'il ne répond pas, sans toucher à une connexion en bonne santé
+    // (sinon l'écran de jeu serait rechargé à chaque changement d'onglet).
+    function checkConnection() {
+      if (cancelled || finishedRef.current || fatal || !everJoined) return;
+      const state = socket ? socket.raw.readyState : WebSocket.CLOSED;
+      if (state === WebSocket.CONNECTING) return;
+      if (state !== WebSocket.OPEN) {
+        retries = 0;
+        setReconnecting(true);
+        connect();
+        return;
+      }
+      clearTimeout(pongTimer);
+      socket.ping();
+      pongTimer = setTimeout(() => {
+        if (cancelled) return;
+        retries = 0;
+        setReconnecting(true);
+        connect();
+      }, 2500);
+    }
+    function onVisible() {
+      if (document.visibilityState === "visible") checkConnection();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", checkConnection);
+
+    connect();
+
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
+      clearTimeout(joinRetryTimer);
+      clearTimeout(pongTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", checkConnection);
       clearInterval(timerRef.current);
-      socket.close();
+      // Le joueur quitte VOLONTAIREMENT l'écran de jeu : élimination ou annulation
+      // immédiates. Fermer simplement la page ou perdre le réseau, au contraire,
+      // laisse la partie reprenable (aucun de ces cas ne passe par ici).
+      if (matchStartedRef.current && !finishedRef.current) socket?.leaveMatch();
+      else if (hostCodeRef.current) socket?.cancelPrivateMatch();
+      socket?.close();
     };
   }, []);
 
@@ -381,11 +541,36 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
 
   // Erreur récupérable (ex : « Tu as déjà une partie en cours »). Définie ici
   // pour être affichée aussi pendant l'attente, pas seulement en pleine partie.
-  const toast = toastError ? (
+  const toast = reconnecting ? (
+    <p className="font-display italic text-center text-sm" style={{ color: "var(--coral)" }}>
+      Connexion perdue — reconnexion en cours…
+    </p>
+  ) : toastError ? (
     <p className="font-display italic text-center text-sm" style={{ color: "var(--coral)" }}>
       {toastError}
     </p>
   ) : null;
+
+  function handleCancel() {
+    // Prévient le serveur avant de fermer : le code est supprimé tout de suite
+    // au lieu d'attendre le délai de grâce d'une simple déconnexion.
+    socketRef.current?.cancelPrivateMatch();
+    hostCodeRef.current = null;
+    onAbandon();
+  }
+
+  async function handleShare() {
+    const link = `${window.location.origin}${window.location.pathname}?match=${waitingCode}`;
+    try {
+      await navigator.share({
+        title: "ClashQuiz",
+        text: `Rejoins ma partie ClashQuiz avec le code ${waitingCode}`,
+        url: link,
+      });
+    } catch {
+      // partage annulé par le joueur : rien à faire
+    }
+  }
 
   function handleCopyLink() {
     const link = `${window.location.origin}${window.location.pathname}?match=${waitingCode}`;
@@ -405,7 +590,7 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             </p>
             {toast}
             <button
-              onClick={onAbandon}
+              onClick={handleCancel}
               className="text-sm underline"
               style={{ color: "var(--parchment-dim)" }}
             >
@@ -434,13 +619,25 @@ export default function Duel({ player, category, mode = "queue", privateCode, on
             >
               {linkCopied ? "Lien copié !" : "Copier le lien d'invitation"}
             </button>
+            {typeof navigator !== "undefined" && navigator.share && (
+              <button
+                onClick={handleShare}
+                className="w-full py-3 font-bold border"
+                style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "transparent" }}
+              >
+                Partager…
+              </button>
+            )}
             <p className="text-xs break-all" style={{ color: "var(--parchment-dim)" }}>{link}</p>
             <p className="font-display italic text-sm" style={{ color: "var(--parchment-dim)" }}>
               En attente de ton ami…
             </p>
+            <p className="text-xs" style={{ color: "var(--parchment-dim)" }}>
+              Tu peux quitter l'appli pour envoyer le lien : ta partie t'attend 3 minutes.
+            </p>
             {toast}
             <button
-              onClick={onAbandon}
+              onClick={handleCancel}
               className="text-sm underline"
               style={{ color: "var(--parchment-dim)" }}
             >

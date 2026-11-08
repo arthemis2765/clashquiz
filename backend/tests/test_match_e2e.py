@@ -54,8 +54,14 @@ def fast_server(monkeypatch):
 
 def _reset_manager():
     m = manager_mod.manager
+    for task in list(getattr(m, "private_expiry_tasks", {}).values()):
+        try:
+            task.cancel()
+        except RuntimeError:  # la boucle d'événements du test précédent est déjà fermée
+            pass
     for name in ("queues", "pending_groups", "private_matches", "matches", "player_to_match",
-                 "queue_fallback_timers", "queue_fallback_started_at"):
+                 "queue_fallback_timers", "queue_fallback_started_at",
+                 "private_suspended", "private_expiry_tasks", "finished_results"):
         container = getattr(m, name, None)
         if hasattr(container, "clear"):
             container.clear()
@@ -309,3 +315,155 @@ def test_public_matchmaking_falls_back_to_a_duel_with_two_players(server):
     assert len(alice.payloads("match_found")[0]["opponents"]) == 1
     assert alice.end["scores"] == {alice.id: len(QUESTIONS), bob.id: len(QUESTIONS)}
     assert alice.payloads("wrong_answer") == []
+
+
+# --------------------------------------------------------------------------
+# Partie privée : le créateur quitte l'appli pour partager son code
+# --------------------------------------------------------------------------
+def wait_until(condition, timeout=3.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return
+        time.sleep(0.02)
+    raise AssertionError("condition jamais remplie à temps")
+
+
+def create_code_then_drop_socket(alice):
+    """Alice crée sa partie puis perd sa connexion (appli passée en arrière-plan)."""
+    alice.send("create_private_match", category_slug=CATEGORY, **alice.auth)
+    code = alice.wait_for("private_match_created")["code"]
+    alice.ws.close()
+    wait_until(lambda: code in manager_mod.manager.private_suspended)
+    return code
+
+
+def test_private_code_survives_host_leaving_and_returning(server):
+    """Régression : partager son code obligeait à quitter l'appli, ce qui détruisait le code."""
+    with Connections(server, ["Alice", "Bob"]) as (alice, bob):
+        code = create_code_then_drop_socket(alice)
+
+        # Bob arrive pendant l'absence d'Alice : refus NON fatal, le code reste valable.
+        bob.send("join_private_match", code=code, **bob.auth)
+        error = bob.wait_for("error")
+        assert error.get("fatal") is False
+        assert code in manager_mod.manager.private_matches
+
+        # Alice revient avec un nouveau socket et reprend sa partie en attente.
+        with server.websocket_connect("/ws/game") as ws2:
+            alice2 = Gamer("Alice", ws2, alice.auth)
+            alice2.send("resume_private_match", code=code, **alice2.auth)
+            assert alice2.wait_for("private_match_created")["code"] == code
+
+            bob.send("join_private_match", code=code, **bob.auth)
+            alice2.wait_for("match_found")
+            bob.wait_for("match_found")
+            play([alice2, bob], answer_tolerantly)
+
+        assert alice2.end is not None and bob.end is not None
+
+
+def test_private_code_expires_when_host_never_returns(server, monkeypatch):
+    monkeypatch.setattr(manager_mod, "PRIVATE_RECONNECT_GRACE_SECONDS", 0.3)
+    with Connections(server, ["Alice", "Bob"]) as (alice, bob):
+        code = create_code_then_drop_socket(alice)
+        wait_until(lambda: code not in manager_mod.manager.private_matches)
+
+        bob.send("join_private_match", code=code, **bob.auth)
+        assert "n'existe pas" in bob.wait_for("error")["message"]
+
+        with server.websocket_connect("/ws/game") as ws2:
+            alice2 = Gamer("Alice", ws2, alice.auth)
+            alice2.send("resume_private_match", code=code, **alice2.auth)
+            assert "expiré" in alice2.wait_for("error")["message"]
+
+
+def test_cancel_private_match_removes_code_immediately(server):
+    with Connections(server, ["Alice"]) as (alice,):
+        alice.send("create_private_match", category_slug=CATEGORY, **alice.auth)
+        code = alice.wait_for("private_match_created")["code"]
+        alice.send("cancel_private_match")
+        wait_until(lambda: code not in manager_mod.manager.private_matches)
+        assert code not in manager_mod.manager.private_suspended
+
+
+def test_bad_token_cannot_borrow_another_players_identity(server):
+    """Un faux token ne doit pas lier l'identité d'Alice au socket de Mallory
+    (sinon Mallory pouvait annuler la partie d'Alice ou l'éliminer en se déconnectant)."""
+    with Connections(server, ["Alice", "Mallory"]) as (alice, mallory):
+        alice.send("create_private_match", category_slug=CATEGORY, **alice.auth)
+        code = alice.wait_for("private_match_created")["code"]
+
+        mallory.send("join_queue", player_id=alice.id, device_token="faux-token",
+                     category_slug=CATEGORY, pseudo="Mallory")
+        mallory.wait_for("error")
+        mallory.send("cancel_private_match")
+        mallory.ws.close()
+        time.sleep(0.3)
+
+        assert code in manager_mod.manager.private_matches
+        assert code not in manager_mod.manager.private_suspended
+
+
+# --------------------------------------------------------------------------
+# Reprise en pleine partie : une coupure de connexion n'élimine plus personne
+# --------------------------------------------------------------------------
+def start_match_and_reach_first_turn(alice, bob):
+    start_private_match(alice, bob)
+    alice.wait_for("turn_start")
+    bob.wait_for("turn_start")
+
+
+def test_disconnect_in_match_keeps_player_and_resume_restores_state(server):
+    with Connections(server, ["Alice", "Bob"]) as (alice, bob):
+        start_match_and_reach_first_turn(alice, bob)
+        alice.ws.close()
+
+        notice = bob.wait_for("player_disconnected")
+        assert notice == {"player_id": alice.id, "temporary": True}
+        match = manager_mod.manager.get_match(alice.id)
+        assert match is not None and match.lives[alice.id] == 3  # personne n'est éliminé
+
+        with server.websocket_connect("/ws/game") as ws2:
+            alice2 = Gamer("Alice", ws2, alice.auth)
+            alice2.send("resume_session", **alice2.auth)
+            assert alice2.wait_for("match_found")["resumed"] is True
+            alice2.wait_for("round_start")
+            assert alice2.wait_for("turn_start")["timer_seconds"] > 0
+            assert bob.wait_for("player_reconnected") == {"player_id": alice.id}
+
+            # `play` retient la question à partir des événements round_start qu'elle lit
+            # elle-même ; ceux de la 1re manche ont déjà été consommés plus haut.
+            for gamer in (alice2, bob):
+                gamer.prompt = gamer.payloads("round_start")[-1]["prompt_label"]
+            play([alice2, bob], answer_tolerantly)
+        assert alice2.end is not None and bob.end is not None
+
+
+def test_leave_match_eliminates_immediately(server):
+    with Connections(server, ["Alice", "Bob"]) as (alice, bob):
+        start_match_and_reach_first_turn(alice, bob)
+        bob.send("leave_match")
+        assert alice.wait_for("match_end")["winner_id"] == alice.id
+
+
+def test_result_is_kept_for_a_player_who_was_away_at_the_end(server):
+    with Connections(server, ["Alice", "Bob"]) as (alice, bob):
+        start_match_and_reach_first_turn(alice, bob)
+        alice.ws.close()
+        bob.wait_for("player_disconnected")
+        bob.send("leave_match")  # Alice gagne pendant qu'elle est absente
+        wait_until(lambda: alice.id in manager_mod.manager.finished_results)
+
+        with server.websocket_connect("/ws/game") as ws2:
+            alice2 = Gamer("Alice", ws2, alice.auth)
+            alice2.send("resume_session", **alice2.auth)
+            assert alice2.wait_for("match_end")["winner_id"] == alice.id
+
+
+def test_resume_with_nothing_to_resume_answers_resume_none(server):
+    with Connections(server, ["Alice"]) as (alice,):
+        alice.send("resume_session", **alice.auth)
+        alice.wait_for("resume_none")
+        alice.send("ping")
+        alice.wait_for("pong")

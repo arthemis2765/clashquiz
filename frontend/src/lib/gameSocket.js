@@ -158,6 +158,38 @@ export function connectGameSocket({ onEvent, onClose }) {
         device_token: deviceToken,
       });
     },
+    // Le créateur revient après avoir quitté l'appli pour partager son code :
+    // on rattache ce nouveau socket à sa partie en attente.
+    resumePrivateMatch({ playerId, code, deviceToken }) {
+      return send({
+        event: "resume_private_match",
+        player_id: playerId,
+        code,
+        device_token: deviceToken,
+      });
+    },
+    // Annulation volontaire : le code est supprimé tout de suite côté serveur.
+    cancelPrivateMatch() {
+      return send({ event: "cancel_private_match" });
+    },
+    // Reconnexion : le serveur rattache ce socket à la partie / la file / le code privé
+    // que le joueur avait en cours (réponse : match_found + état, match_end, ou resume_none).
+    resumeSession({ playerId, deviceToken, code }) {
+      return send({
+        event: "resume_session",
+        player_id: playerId,
+        device_token: deviceToken,
+        code: code ?? null,
+      });
+    },
+    // Sortie volontaire d'une partie en cours (élimination immédiate côté serveur).
+    leaveMatch() {
+      return send({ event: "leave_match" });
+    },
+    // Test de vie : le serveur répond « pong ».
+    ping() {
+      return send({ event: "ping" });
+    },
     submitAnswer(answer) {
       return send({ event: "submit_answer", answer });
     },

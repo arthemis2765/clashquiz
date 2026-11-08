@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import secrets
 import time
 import uuid
@@ -176,6 +177,109 @@ def _apply_life_loss(match: MatchState, player_id: str) -> bool:
     return False
 
 
+async def _handle_player_exit(match: MatchState, player_id: str) -> None:
+    """Le joueur QUITTE vraiment la partie (il a appuyé sur retour / abandonner) :
+    élimination immédiate, sans attendre ses tours. Une simple coupure de connexion
+    n'appelle pas cette fonction : le joueur reste dans la partie et peut y revenir."""
+    if not _eliminate_player(match, player_id):
+        return  # déjà éliminé : rien à faire
+    for pid, p in match.players.items():
+        if pid != player_id:
+            await send_json(p.websocket, "player_disconnected", {"player_id": player_id})
+    over, winner = _match_over_winner(match)
+    if over:
+        if match.round_timer_task:
+            match.round_timer_task.cancel()
+        round_state = match.current_round
+        if round_state and not round_state.resolved:
+            _finalize_round(match, round_state)
+        await end_match(match, winner_id=winner)
+        return
+    # Le match continue (groupe à 3-4, il reste plusieurs joueurs actifs). Si c'était
+    # le tour du joueur qui part, on enchaîne tout de suite au lieu de faire attendre.
+    round_state = match.current_round
+    if (
+        round_state
+        and not round_state.resolved
+        and round_state.turn_index < len(round_state.turn_order)
+        and round_state.turn_order[round_state.turn_index] == player_id
+    ):
+        if match.round_timer_task:
+            match.round_timer_task.cancel()
+        round_state.turn_status[player_id] = "timeout"
+        await _advance_turn(match, round_state, eliminated_this_turn=[])
+
+
+async def _send_match_snapshot(match: MatchState, player_id: str, websocket: WebSocket) -> None:
+    """Renvoie à un joueur qui se reconnecte tout ce qu'il faut pour reconstruire son
+    écran : adversaires, question en cours, résultats déjà joués à cette manche,
+    et le tour courant avec le temps RESTANT réel."""
+    opponents = [
+        {"player_id": qid, "pseudo": q.pseudo}
+        for qid, q in match.players.items() if qid != player_id
+    ]
+    await send_json(websocket, "match_found", {
+        "match_id": match.match_id,
+        "opponents": opponents,
+        "resumed": True,
+    })
+
+    round_state = match.current_round
+    if not round_state or round_state.resolved:
+        return  # entre deux manches : la prochaine manche lui sera envoyée normalement
+
+    question = round_state.question
+    await send_json(websocket, "round_start", {
+        "round_number": round_state.round_number,
+        "prompt_label": question["prompt_label"],
+        "hint_type": question["hint_type"],
+        "hint_url": question["hint_url"],
+        "difficulty": question["difficulty"],
+        "turn_order": round_state.turn_order,
+        "scores": match.scores,
+        "lives": match.lives,
+        "joker_charges": match.joker_charges,
+    })
+    for pid, status in round_state.turn_status.items():
+        if status == "timeout":
+            await send_json(websocket, "turn_timeout", {
+                "round_number": round_state.round_number,
+                "player_id": pid,
+                "scores": match.scores,
+                "lives": match.lives,
+                "eliminated": [],
+            })
+        else:
+            await send_json(websocket, "turn_result", {
+                "round_number": round_state.round_number,
+                "player_id": pid,
+                "status": status,
+                "scores": match.scores,
+                "lives": match.lives,
+            })
+    if round_state.eliminated_this_round:
+        await send_json(websocket, "player_eliminated_mid_round", {
+            "round_number": round_state.round_number,
+            "scores": match.scores,
+            "lives": match.lives,
+            "eliminated": list(round_state.eliminated_this_round),
+        })
+    if round_state.turn_index < len(round_state.turn_order):
+        active_player_id = round_state.turn_order[round_state.turn_index]
+        remaining = max(0.0, round_state.turn_deadline - time.time())
+        await send_json(websocket, "turn_start", {
+            "round_number": round_state.round_number,
+            "turn_index": round_state.turn_index,
+            "total_turns": len(round_state.turn_order),
+            "active_player_id": active_player_id,
+            "is_your_turn": player_id == active_player_id,
+            "timer_seconds": math.ceil(remaining),
+            "scores": match.scores,
+            "lives": match.lives,
+            "joker_charges": match.joker_charges,
+        })
+
+
 @router.websocket("/ws/game")
 async def game_socket(websocket: WebSocket):
     await websocket.accept()
@@ -204,16 +308,22 @@ async def game_socket(websocket: WebSocket):
 
             try:
                 if event == "join_queue":
-                    player_id = data["player_id"]
-                    category_slug = data["category_slug"]
+                    claimed_id = data["player_id"]
+                    claimed_slug = data["category_slug"]
                     device_token = data.get("device_token", "")
 
-                    pseudo = await verify_device_token(player_id, device_token)
+                    pseudo = await verify_device_token(claimed_id, device_token)
                     if not pseudo:
                         await send_json(websocket, "error", {
                             "message": "Authentification invalide. Reconnecte-toi.",
                         })
                         continue
+
+                    # Identité liée au socket seulement une fois le token vérifié : sinon
+                    # n'importe qui pouvait « devenir » un autre joueur (jokers, élimination
+                    # à la déconnexion) en envoyant son id avec un faux token.
+                    player_id = claimed_id
+                    category_slug = claimed_slug
 
                     category, questions_by_difficulty = await resolve_category_and_questions(category_slug)
                     if category is None:
@@ -246,16 +356,22 @@ async def game_socket(websocket: WebSocket):
                         })
 
                 elif event == "create_private_match":
-                    player_id = data["player_id"]
-                    category_slug = data["category_slug"]
+                    claimed_id = data["player_id"]
+                    claimed_slug = data["category_slug"]
                     device_token = data.get("device_token", "")
 
-                    pseudo = await verify_device_token(player_id, device_token)
+                    pseudo = await verify_device_token(claimed_id, device_token)
                     if not pseudo:
                         await send_json(websocket, "error", {
                             "message": "Authentification invalide. Reconnecte-toi.",
                         })
                         continue
+
+                    # Identité liée au socket seulement une fois le token vérifié : sinon
+                    # n'importe qui pouvait « devenir » un autre joueur (jokers, élimination
+                    # à la déconnexion) en envoyant son id avec un faux token.
+                    player_id = claimed_id
+                    category_slug = claimed_slug
 
                     category, questions_by_difficulty = await resolve_category_and_questions(category_slug)
                     if category is None:
@@ -286,16 +402,21 @@ async def game_socket(websocket: WebSocket):
                     })
 
                 elif event == "join_private_match":
-                    player_id = data["player_id"]
+                    claimed_id = data["player_id"]
                     code = str(data.get("code", "")).strip().upper()
                     device_token = data.get("device_token", "")
 
-                    pseudo = await verify_device_token(player_id, device_token)
+                    pseudo = await verify_device_token(claimed_id, device_token)
                     if not pseudo:
                         await send_json(websocket, "error", {
                             "message": "Authentification invalide. Reconnecte-toi.",
                         })
                         continue
+
+                    # Identité liée au socket seulement une fois le token vérifié : sinon
+                    # n'importe qui pouvait « devenir » un autre joueur (jokers, élimination
+                    # à la déconnexion) en envoyant son id avec un faux token.
+                    player_id = claimed_id
 
                     if not code:
                         await send_json(websocket, "error", {"message": "Code de partie manquant."})
@@ -318,13 +439,132 @@ async def game_socket(websocket: WebSocket):
                     )
                     match = await manager.join_private_match(code, queued)
                     if not match:
-                        await send_json(websocket, "error", {
-                            "message": "Ce code de partie est invalide, expiré, ou déjà utilisé.",
-                        })
+                        reason = manager.diagnose_private_join(code, player_id)
+                        if reason == "host_away":
+                            # Non fatal : le code reste valable, on peut réessayer.
+                            await send_json(websocket, "error", {
+                                "message": "Ton ami s'est absenté un instant pour partager le code. "
+                                           "Réessaie dans quelques secondes.",
+                                "fatal": False,
+                            })
+                        elif reason == "own":
+                            await send_json(websocket, "error", {
+                                "message": "Tu ne peux pas rejoindre ta propre partie "
+                                           "(es-tu connecté avec le même compte sur deux appareils ?).",
+                            })
+                        elif reason == "busy":
+                            await send_json(websocket, "error", {
+                                "message": "Tu as déjà une partie ou une recherche en cours. "
+                                           "Retourne à l'accueil puis réessaie.",
+                            })
+                        else:
+                            await send_json(websocket, "error", {
+                                "message": "Ce code n'existe pas ou la partie a déjà démarré. "
+                                           "Vérifie le code avec ton ami.",
+                            })
                         continue
 
                     category_slug = match.category_slug  # pour le nettoyage en cas de déconnexion
                     await _launch_match(match)
+
+                elif event == "resume_private_match":
+                    # Le créateur revient (appli rouverte après avoir partagé son code) :
+                    # on rattache ce nouveau socket à sa partie en attente.
+                    claimed_id = data["player_id"]
+                    code = str(data.get("code", "")).strip().upper()
+                    device_token = data.get("device_token", "")
+
+                    pseudo = await verify_device_token(claimed_id, device_token)
+                    if not pseudo:
+                        await send_json(websocket, "error", {
+                            "message": "Authentification invalide. Reconnecte-toi.",
+                        })
+                        continue
+                    player_id = claimed_id
+
+                    resumed_slug = await manager.resume_private_match(code, player_id, websocket)
+                    if not resumed_slug:
+                        await send_json(websocket, "error", {
+                            "message": "Ta partie privée a expiré pendant ton absence. Crées-en une nouvelle.",
+                        })
+                        continue
+                    category_slug = resumed_slug
+                    await send_json(websocket, "private_match_created", {
+                        "code": code,
+                        "category_slug": resumed_slug,
+                    })
+
+                elif event == "cancel_private_match":
+                    # Annulation volontaire (bouton « Annuler ») : le code disparaît tout
+                    # de suite, sans attendre le délai de grâce d'une simple déconnexion.
+                    if player_id:
+                        await manager.cancel_private_matches_for_player(player_id)
+
+                elif event == "ping":
+                    # Test de vie du client : après un passage en arrière-plan, un socket
+                    # peut sembler ouvert alors qu'il est mort ; sans réponse, il se reconnecte.
+                    await send_json(websocket, "pong", {})
+
+                elif event == "resume_session":
+                    # Reconnexion (réseau coupé, appli rouverte) : on rattache ce nouveau
+                    # socket à ce que le joueur avait en cours, quel que soit son état.
+                    claimed_id = data["player_id"]
+                    code = str(data.get("code") or "").strip().upper()
+                    device_token = data.get("device_token", "")
+
+                    pseudo = await verify_device_token(claimed_id, device_token)
+                    if not pseudo:
+                        await send_json(websocket, "error", {
+                            "message": "Authentification invalide. Reconnecte-toi.",
+                        })
+                        continue
+                    player_id = claimed_id
+
+                    # 1) Match en cours : on remplace son socket et on renvoie l'état courant.
+                    match = manager.get_match(player_id)
+                    if match and player_id in match.players:
+                        match.players[player_id].websocket = websocket
+                        await _send_match_snapshot(match, player_id, websocket)
+                        if match.lives.get(player_id, 0) > 0:
+                            for pid, p in match.players.items():
+                                if pid != player_id:
+                                    await send_json(p.websocket, "player_reconnected", {
+                                        "player_id": player_id,
+                                    })
+                        continue
+
+                    # 2) Match terminé pendant son absence : il retrouve le résultat.
+                    finished = manager.pop_finished_result(player_id)
+                    if finished:
+                        await send_json(websocket, "match_found", {
+                            "match_id": finished["match_id"],
+                            "opponents": finished["opponents"],
+                            "resumed": True,
+                        })
+                        await send_json(websocket, "match_end", finished["end"])
+                        continue
+
+                    # 3) Partie privée en attente de l'ami.
+                    if code:
+                        resumed_slug = await manager.resume_private_match(code, player_id, websocket)
+                        if resumed_slug:
+                            category_slug = resumed_slug
+                            await send_json(websocket, "private_match_created", {
+                                "code": code,
+                                "category_slug": resumed_slug,
+                            })
+                            continue
+
+                    # 4) Rien à reprendre (file d'attente, ou partie disparue) : on nettoie
+                    # les inscriptions laissées par l'ancien socket ; le client décide.
+                    await manager.remove_player_from_queues(player_id)
+                    await send_json(websocket, "resume_none", {})
+
+                elif event == "leave_match":
+                    # Sortie VOLONTAIRE (le joueur quitte l'écran de jeu) : élimination immédiate.
+                    match = manager.get_match(player_id) if player_id else None
+                    if match:
+                        await _handle_player_exit(match, player_id)
 
                 elif event == "submit_answer":
                     match = manager.get_match(player_id) if player_id else None
@@ -394,40 +634,32 @@ async def game_socket(websocket: WebSocket):
                 })
 
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Erreur inattendue sur une connexion WebSocket")
+    finally:
+        # Une connexion qui tombe (réseau coupé, appli passée en arrière-plan,
+        # téléphone verrouillé, fermeture anti-flood...) ne retire PAS le joueur de
+        # sa partie : il peut revenir (event « resume_session ») et ses tours manqués
+        # expirent normalement. Seul l'event « leave_match » élimine tout de suite.
         if player_id:
-            if category_slug:
-                await manager.leave_queue(player_id, category_slug)
-            await manager.cancel_private_matches_for_player(player_id)
-            match = manager.get_match(player_id)
-            if match:
-                _eliminate_player(match, player_id)
-                for pid, p in match.players.items():
-                    if pid != player_id:
-                        await send_json(p.websocket, "player_disconnected", {
-                            "player_id": player_id,
-                        })
-                over, winner = _match_over_winner(match)
-                if over:
-                    if match.round_timer_task:
-                        match.round_timer_task.cancel()
-                    round_state = match.current_round
-                    if round_state and not round_state.resolved:
-                        _finalize_round(match, round_state)
-                    await end_match(match, winner_id=winner)
-                else:
-                    # Le match continue (groupe à 3-4, il reste plusieurs joueurs actifs).
-                    # Si c'était le tour du joueur qui vient de partir, on ne fait pas
-                    # attendre les autres jusqu'au timeout complet : on enchaîne tout de suite.
-                    round_state = match.current_round
-                    if (
-                        round_state
-                        and not round_state.resolved
-                        and round_state.turn_order[round_state.turn_index] == player_id
-                    ):
-                        if match.round_timer_task:
-                            match.round_timer_task.cancel()
-                        round_state.turn_status[player_id] = "timeout"
-                        await _advance_turn(match, round_state, eliminated_this_turn=[])
+            try:
+                if category_slug:
+                    await manager.leave_queue(player_id, category_slug, websocket)
+                await manager.suspend_private_matches_for_player(player_id, websocket)
+                match = manager.get_match(player_id)
+                member = match.players.get(player_id) if match else None
+                # Si le joueur s'est déjà reconnecté sur un autre socket, celui-ci
+                # n'est plus le sien : sa fermeture tardive ne change rien.
+                if member is not None and member.websocket is websocket and match.lives.get(player_id, 0) > 0:
+                    for pid, p in match.players.items():
+                        if pid != player_id:
+                            await send_json(p.websocket, "player_disconnected", {
+                                "player_id": player_id,
+                                "temporary": True,
+                            })
+            except Exception:
+                logger.exception("Erreur pendant le nettoyage d'une connexion WebSocket")
 
 
 def _build_turn_order(match: MatchState) -> list[str]:
@@ -543,6 +775,7 @@ async def _advance_turn(match: MatchState, round_state: RoundState, eliminated_t
 async def _start_turn(match: MatchState, round_state: RoundState):
     active_player_id = round_state.turn_order[round_state.turn_index]
     round_state.turn_started_at = time.time()
+    round_state.turn_deadline = round_state.turn_started_at + TURN_DURATION_SECONDS
 
     for pid, p in match.players.items():
         await send_json(p.websocket, "turn_start", {
@@ -703,6 +936,7 @@ async def handle_use_joker(websocket: WebSocket, player_id: Optional[str], joker
             match.round_timer_task.cancel()
         elapsed = time.time() - round_state.turn_started_at
         remaining = max(0.0, TURN_DURATION_SECONDS - elapsed) + EXTRA_TIME_BONUS_SECONDS
+        round_state.turn_deadline = time.time() + remaining
         match.round_timer_task = asyncio.create_task(
             _turn_timeout_watcher(match, round_state.round_number, player_id, remaining)
         )
@@ -728,14 +962,17 @@ async def end_match(match: MatchState, winner_id: Optional[str]):
         # bloquée indéfiniment sans aucun signal côté client.
         logger.exception("Échec de la persistance du match %s", match.match_id)
 
+    end_payload = {
+        "winner_id": winner_id,
+        "scores": match.scores,
+        "lives": match.lives,
+        "elo": result.get("elo", {}),
+        "leaderboard": result.get("leaderboard", []),
+        "rounds_log": match.rounds_log,
+    }
+    # Un joueur déconnecté à cet instant retrouvera ce résultat en revenant.
+    manager.remember_match_end(match, end_payload)
     for p in match.players.values():
-        await send_json(p.websocket, "match_end", {
-            "winner_id": winner_id,
-            "scores": match.scores,
-            "lives": match.lives,
-            "elo": result.get("elo", {}),
-            "leaderboard": result.get("leaderboard", []),
-            "rounds_log": match.rounds_log,
-        })
+        await send_json(p.websocket, "match_end", end_payload)
 
     manager.end_match(match.match_id)

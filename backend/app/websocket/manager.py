@@ -21,8 +21,20 @@ START_DIFFICULTY = 2
 JOKER_CHARGES_PER_PLAYER = 3  # pool total, mixable librement entre les 3 types
 EXTRA_TIME_BONUS_SECONDS = 10  # s'ajoute au temps restant du tour EN COURS du joueur qui l'utilise
 
-PRIVATE_CODE_ALPHABET = string.ascii_uppercase + string.digits
+# Sans 0/O, 1/I/L et U (confondus avec V) : un code lu dans WhatsApp ou dicté à
+# voix haute ne doit pas pouvoir être mal recopié. 30 symboles ^ 6 = 729 M de codes.
+PRIVATE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
 PRIVATE_CODE_LENGTH = 6
+
+# Pour partager son code, le créateur doit quitter l'appli : son téléphone coupe
+# alors le WebSocket. Son code reste donc valable tant qu'il ne l'annule pas et que
+# personne n'a rejoint : il n'y a pas de durée d'attente côté joueur. Ce délai n'est
+# qu'un garde-fou mémoire (24 h) pour purger les codes réellement abandonnés.
+PRIVATE_RECONNECT_GRACE_SECONDS = 24 * 3600
+
+# Résultats de fin de match gardés pour un joueur absent à ce moment-là, afin qu'il
+# les voie en revenant. Borné : au-delà, les plus anciens sont oubliés.
+MAX_REMEMBERED_MATCH_ENDS = 500
 
 # Anti-bruteforce sur submit_answer : un joueur humain n'a pas besoin de plus
 # de quelques tentatives par tour, et encore moins de les envoyer à moins
@@ -64,6 +76,7 @@ class RoundState:
     turn_order: List[str] = field(default_factory=list)  # ordre de passage pour CETTE manche (joueurs actifs uniquement)
     turn_index: int = 0  # index, dans turn_order, du joueur dont c'est le tour
     turn_started_at: float = 0.0  # instant de départ du tour EN COURS
+    turn_deadline: float = 0.0  # instant d'expiration du tour EN COURS (tient compte du joker « temps supplémentaire »)
     resolved: bool = False  # True quand tous les tours de la manche sont joués (ou le match terminé en cours de manche)
     opted_out: Set[str] = field(default_factory=set)  # joueurs ayant "passé" leur propre tour
     extended_by: Set[str] = field(default_factory=set)  # joueurs ayant déjà utilisé "Temps supplémentaire" cette manche
@@ -211,6 +224,13 @@ class ConnectionManager:
         self.player_to_match: Dict[str, str] = {}
         # code partie privée -> (créateur en attente, questions déjà résolues pour sa catégorie)
         self.private_matches: Dict[str, Tuple[QueuedPlayer, Dict[int, List[dict]]]] = {}
+        # Codes dont le créateur est momentanément déconnecté (délai de grâce en cours),
+        # et la tâche qui les supprimera si le créateur ne revient pas à temps.
+        self.private_suspended: Set[str] = set()
+        self.private_expiry_tasks: Dict[str, asyncio.Task] = {}
+        # player_id -> {"opponents": [...], "end": payload match_end} pour les joueurs
+        # qui étaient déconnectés à la fin de leur match.
+        self.finished_results: Dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
     def _is_player_busy(self, player_id: str) -> bool:
@@ -415,19 +435,89 @@ class ConnectionManager:
             if creator.player_id == player.player_id:
                 # on ne peut pas rejoindre sa propre partie
                 return None
+            if code in self.private_suspended:
+                # Le créateur est parti quelques instants (il partage son code) :
+                # lancer maintenant enverrait la partie à un socket mort.
+                return None
             if self._is_player_busy(player.player_id):
                 return None
-            del self.private_matches[code]
+            self._drop_private_code(code)
             return self._create_match([creator, player], questions_by_difficulty)
 
     async def cancel_private_matches_for_player(self, player_id: str):
+        """Annulation volontaire (bouton « Annuler ») : le code disparaît tout de suite."""
         async with self._lock:
             stale_codes = [
                 code for code, (creator, _) in self.private_matches.items()
                 if creator.player_id == player_id
             ]
             for code in stale_codes:
-                del self.private_matches[code]
+                self._drop_private_code(code)
+
+    def _drop_private_code(self, code: str) -> None:
+        """Supprime un code et nettoie son état de suspension (à appeler sous verrou)."""
+        self.private_matches.pop(code, None)
+        self.private_suspended.discard(code)
+        task = self.private_expiry_tasks.pop(code, None)
+        if task:
+            task.cancel()
+
+    async def suspend_private_matches_for_player(self, player_id: str, websocket) -> None:
+        """Déconnexion (réseau coupé, appli en arrière-plan) du créateur d'une partie
+        privée en attente : on garde le code PRIVATE_RECONNECT_GRACE_SECONDS pour lui
+        laisser le temps de revenir. Sans effet si le socket qui se ferme n'est plus
+        celui du créateur (il s'est déjà reconnecté sur un autre socket)."""
+        async with self._lock:
+            for code, (creator, _) in list(self.private_matches.items()):
+                if creator.player_id != player_id or creator.websocket is not websocket:
+                    continue
+                self.private_suspended.add(code)
+                old_task = self.private_expiry_tasks.pop(code, None)
+                if old_task:
+                    old_task.cancel()
+                self.private_expiry_tasks[code] = asyncio.create_task(self._expire_private_code(code))
+
+    async def _expire_private_code(self, code: str) -> None:
+        try:
+            await asyncio.sleep(PRIVATE_RECONNECT_GRACE_SECONDS)
+        except asyncio.CancelledError:
+            return  # le créateur est revenu (ou a annulé) avant la fin du délai
+        async with self._lock:
+            if code in self.private_suspended:
+                self._drop_private_code(code)
+
+    async def resume_private_match(self, code: str, player_id: str, websocket) -> Optional[str]:
+        """Le créateur revient avec un nouveau socket : on le rattache à son code.
+        Retourne le slug de la catégorie, ou None si le code n'existe plus (délai
+        dépassé, annulé, déjà utilisé) ou n'appartient pas à ce joueur."""
+        async with self._lock:
+            entry = self.private_matches.get(code)
+            if not entry:
+                return None
+            creator, _ = entry
+            if creator.player_id != player_id:
+                return None
+            creator.websocket = websocket
+            self.private_suspended.discard(code)
+            task = self.private_expiry_tasks.pop(code, None)
+            if task:
+                task.cancel()
+            return creator.category_slug
+
+    def diagnose_private_join(self, code: str, player_id: str) -> str:
+        """Pourquoi rejoindre `code` échoue : un message précis plutôt que le même
+        « invalide, expiré ou déjà utilisé » pour quatre situations différentes."""
+        entry = self.private_matches.get(code)
+        if not entry:
+            return "not_found"
+        creator, _ = entry
+        if creator.player_id == player_id:
+            return "own"
+        if code in self.private_suspended:
+            return "host_away"
+        if self._is_player_busy(player_id):
+            return "busy"
+        return "not_found"
 
     def _create_match(
         self,
@@ -450,21 +540,53 @@ class ConnectionManager:
         self.matches[match_id] = match
         for pid in order:
             self.player_to_match[pid] = match_id
+            self.finished_results.pop(pid, None)
         return match
 
-    async def leave_queue(self, player_id: str, category_slug: str):
+    async def leave_queue(self, player_id: str, category_slug: str, websocket=None):
+        """Retire le joueur de la file / du groupe en formation. Si `websocket` est
+        fourni, seule l'inscription faite avec CE socket est retirée : la fermeture
+        tardive d'un ancien socket ne doit pas effacer l'inscription faite depuis le
+        nouveau après une reconnexion."""
+        def is_target(p) -> bool:
+            return p.player_id == player_id and (websocket is None or p.websocket is websocket)
+
         async with self._lock:
             queue = self.queues.get(category_slug, [])
-            self.queues[category_slug] = [p for p in queue if p.player_id != player_id]
+            self.queues[category_slug] = [p for p in queue if not is_target(p)]
             pending = self.pending_groups.get(category_slug)
             if pending:
-                pending.players = [p for p in pending.players if p.player_id != player_id]
+                pending.players = [p for p in pending.players if not is_target(p)]
             if len(self.queues[category_slug]) < 2:
                 fallback_task = self.queue_fallback_timers.pop(category_slug, None)
                 self.queue_fallback_started_at.pop(category_slug, None)
                 if fallback_task:
                     fallback_task.cancel()
             await self._broadcast_queue_state(category_slug)
+
+    async def remove_player_from_queues(self, player_id: str) -> None:
+        """Retire un joueur de toutes les files (inscriptions laissées par un socket
+        mort), avant qu'il se réinscrive depuis son nouveau socket."""
+        for slug in list(set(self.queues) | set(self.pending_groups)):
+            await self.leave_queue(player_id, slug)
+
+    def remember_match_end(self, match: MatchState, end_payload: dict) -> None:
+        """Garde le résultat du match pour chaque joueur : s'il était déconnecté à la
+        fin, il le retrouvera à son retour au lieu d'une partie « introuvable »."""
+        for pid in match.players:
+            opponents = [
+                {"player_id": qid, "pseudo": q.pseudo}
+                for qid, q in match.players.items() if qid != pid
+            ]
+            self.finished_results.pop(pid, None)
+            self.finished_results[pid] = {
+                "match_id": match.match_id, "opponents": opponents, "end": end_payload,
+            }
+        while len(self.finished_results) > MAX_REMEMBERED_MATCH_ENDS:
+            self.finished_results.pop(next(iter(self.finished_results)))
+
+    def pop_finished_result(self, player_id: str) -> Optional[dict]:
+        return self.finished_results.pop(player_id, None)
 
     def get_match(self, player_id: str) -> Optional[MatchState]:
         match_id = self.player_to_match.get(player_id)
